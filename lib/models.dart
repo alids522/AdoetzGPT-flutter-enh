@@ -2328,6 +2328,50 @@ class SwarmAgent {
       };
 }
 
+/// Default 4-role swarm pipeline: Architect -> Coder -> Critic -> Researcher.
+List<SwarmAgent> defaultSwarmAgents(String model) => [
+      SwarmAgent(
+        id: 'swarm-architect',
+        name: 'Architect',
+        role: SwarmAgentRole.architect,
+        model: model,
+        systemPrompt:
+            'You are the Architect. Break the objective into a clear, '
+            'actionable plan with concrete steps, components, and interfaces. '
+            'Be concise and structural; do not implement code.',
+      ),
+      SwarmAgent(
+        id: 'swarm-coder',
+        name: 'Coder',
+        role: SwarmAgentRole.coder,
+        model: model,
+        systemPrompt:
+            'You are the Coder. Using the Architect plan, produce the concrete '
+            'implementation: working code, commands, or artifacts. Prefer '
+            'complete, runnable output over prose.',
+      ),
+      SwarmAgent(
+        id: 'swarm-critic',
+        name: 'Critic',
+        role: SwarmAgentRole.critic,
+        model: model,
+        systemPrompt:
+            'You are the Critic. Adversarially review the implementation for '
+            'bugs, edge cases, security issues, and missing requirements. List '
+            'concrete problems and fixes, ranked by severity.',
+      ),
+      SwarmAgent(
+        id: 'swarm-researcher',
+        name: 'Researcher',
+        role: SwarmAgentRole.researcher,
+        model: model,
+        systemPrompt:
+            'You are the Researcher. Validate the final result against the '
+            'original objective, verify factual claims, and suggest '
+            'improvements or alternatives with clear justification.',
+      ),
+    ];
+
 class SwarmExecutionStep {
   const SwarmExecutionStep({
     required this.agentId,

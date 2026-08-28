@@ -814,8 +814,12 @@ class _CronJobsSection extends StatelessWidget {
                 ),
                 child: ListTile(
                   dense: true,
-                  title: Text(job.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('Prompt: ${job.prompt}\nInterval: Every ${job.intervalMinutes} min${job.lastRunAt != null ? " • Last: ${DateFormat.Hm().format(DateTime.fromMillisecondsSinceEpoch(job.lastRunAt!))}" : ""}'),
+                  title: Text(job.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    'Prompt: ${job.prompt}\nSchedule: ${_cronScheduleLabel(job)}'
+                    '${job.lastRunAt != null ? " • Last: ${DateFormat.Hm().format(DateTime.fromMillisecondsSinceEpoch(job.lastRunAt!))}" : ""}'
+                    '${job.lastRunStatus.startsWith('failed') ? " • ⚠ Failed" : ""}',
+                  ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -830,7 +834,7 @@ class _CronJobsSection extends StatelessWidget {
                       ),
                       IconButton(
                         icon: const Icon(LucideIcons.trash2, size: 16),
-                        onPressed: () => app.deleteCronJob(job.id),
+                        onPressed: () => app.removeCronJob(job.id),
                       ),
                     ],
                   ),
@@ -840,6 +844,14 @@ class _CronJobsSection extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Human-readable label for a cron expression, e.g. `*/30 * * * *` ->
+  /// "Every 30 min", falling back to the raw expression.
+  String _cronScheduleLabel(AiCronJob job) {
+    final step = RegExp(r'^\*/(\d+)\s').firstMatch(job.cronExpression);
+    if (step != null) return 'Every ${step.group(1)} min';
+    return job.cronExpression;
   }
 
   void _showAddCronDialog(BuildContext context, AdoetzAppState app) {
@@ -867,7 +879,10 @@ class _CronJobsSection extends StatelessWidget {
             TextField(
               controller: intervalCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Interval (Minutes)'),
+              decoration: const InputDecoration(
+                labelText: 'Interval (Minutes)',
+                helperText: 'Model: ${app.selectedModel}',
+              ),
             ),
           ],
         ),
@@ -881,16 +896,19 @@ class _CronJobsSection extends StatelessWidget {
               final name = nameCtrl.text.trim();
               final prompt = promptCtrl.text.trim();
               final interval = int.tryParse(intervalCtrl.text.trim()) ?? 60;
-              if (name.isEmpty || prompt.isEmpty) return;
+              if (name.isEmpty || prompt.isEmpty || interval <= 0) return;
 
+              final now = DateTime.now().millisecondsSinceEpoch;
               final job = AiCronJob(
-                id: DateTime.now().millisecondsSinceEpoch.toString(),
-                name: name,
+                id: 'cron-$now',
+                title: name,
+                cronExpression: '*/$interval * * * *',
                 prompt: prompt,
-                intervalMinutes: interval,
-                createdAt: DateTime.now().millisecondsSinceEpoch,
+                targetModel: app.selectedModel,
+                createdAt: now,
+                updatedAt: now,
               );
-              app.saveCronJob(job);
+              app.addCronJob(job);
               Navigator.pop(ctx);
             },
             child: const Text('Save'),

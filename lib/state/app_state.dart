@@ -263,15 +263,22 @@ class AdoetzAppState extends ChangeNotifier {
     try {
       final parts = expression.trim().split(RegExp(r'\s+'));
       if (parts.length < 5) return false;
-      final minute = parts[0];
-      final hour = parts[1];
-
-      final matchMin = minute == '*' || int.tryParse(minute) == now.minute;
-      final matchHour = hour == '*' || int.tryParse(hour) == now.hour;
-      return matchMin && matchHour;
+      return _matchesCronField(parts[0], now.minute) &&
+          _matchesCronField(parts[1], now.hour);
     } catch (_) {
       return false;
     }
+  }
+
+  /// Supports `*`, exact values (`9`), and step intervals (`*/15`).
+  bool _matchesCronField(String field, int value) {
+    final step = RegExp(r'^\*/(\d+)$').firstMatch(field);
+    if (step != null) {
+      final interval = int.parse(step.group(1)!);
+      return interval > 0 && value % interval == 0;
+    }
+    if (field == '*') return true;
+    return int.tryParse(field) == value;
   }
 
   Future<void> _pullRemoteStateAfterStartup() async {
@@ -2670,6 +2677,7 @@ class AdoetzAppState extends ChangeNotifier {
               notifyListeners();
             }
           },
+          onStatus: (_) {},
         );
 
         final totalTime = DateTime.now().difference(startTime).inMilliseconds;
@@ -2770,6 +2778,7 @@ class AdoetzAppState extends ChangeNotifier {
     try {
       final response = await _ai.sendMessage(
         prompt: compactionPrompt,
+        attachments: const [],
         history: const [],
         selectedModel: selectedModel,
         endpoints: endpoints,
@@ -2778,7 +2787,12 @@ class AdoetzAppState extends ChangeNotifier {
         genSettings: genSettings,
         voiceSettings: voiceSettings,
         geminiApiKey: geminiApiKey,
+        memories: const [],
+        thinkingMode: false,
+        artifactMode: false,
         syncSettings: syncSettings,
+        onText: (_) {},
+        onStatus: (_) {},
       );
 
       Map<String, dynamic>? parsed;
@@ -2840,6 +2854,7 @@ class AdoetzAppState extends ChangeNotifier {
 
         final response = await _ai.sendMessage(
           prompt: prompt,
+          attachments: const [],
           history: const [],
           selectedModel: request.model,
           endpoints: request.endpoints,
@@ -2848,7 +2863,12 @@ class AdoetzAppState extends ChangeNotifier {
           genSettings: genSettings,
           voiceSettings: voiceSettings,
           geminiApiKey: geminiApiKey,
+          memories: const [],
+          thinkingMode: false,
+          artifactMode: false,
           syncSettings: syncSettings,
+          onText: (_) {},
+          onStatus: (_) {},
         );
 
         final duration = DateTime.now().difference(stepStart).inMilliseconds;
@@ -2911,6 +2931,7 @@ class AdoetzAppState extends ChangeNotifier {
 
       final response = await _ai.sendMessage(
         prompt: job.prompt,
+        attachments: const [],
         history: const [],
         selectedModel: request.model,
         endpoints: request.endpoints,
@@ -2919,7 +2940,12 @@ class AdoetzAppState extends ChangeNotifier {
         genSettings: genSettings,
         voiceSettings: voiceSettings,
         geminiApiKey: geminiApiKey,
+        memories: const [],
+        thinkingMode: false,
+        artifactMode: false,
         syncSettings: syncSettings,
+        onText: (_) {},
+        onStatus: (_) {},
       );
 
       final updatedJob = job.copyWith(
@@ -2984,6 +3010,50 @@ class AdoetzAppState extends ChangeNotifier {
   void setActivePersona(String? id) {
     activePersonaId = id;
     notifyListeners();
+  }
+
+  void selectPersona(String? id) => setActivePersona(id);
+
+  /// Runs the default 4-role swarm pipeline on [objective] and appends the
+  /// combined transcript into the active session as a bot message.
+  Future<void> runSwarmObjective({required String objective}) async {
+    final agents = defaultSwarmAgents(selectedModel);
+    final transcript = StringBuffer();
+
+    await runSwarmPipeline(
+      task: objective,
+      agents: agents,
+      onStepCompleted: (step) {
+        transcript.writeln(
+          '**${step.agentName}** (${step.role.name})'
+          ' • ${(step.durationMs / 1000).toStringAsFixed(1)}s'
+          '${step.tokenCount > 0 ? ' • ~${step.tokenCount} tokens' : ''}',
+        );
+        transcript.writeln(step.output.trim());
+        transcript.writeln();
+      },
+    );
+
+    if (transcript.isEmpty) return;
+    final session = currentSession;
+    if (session == null) return;
+
+    final msg = Message(
+      id: _newId('swarm'),
+      text: '🧠 **Swarm Pipeline Result**\n\n$transcript',
+      sender: 'bot',
+      timestamp: DateFormat('hh:mm a').format(DateTime.now()),
+      model: selectedModel,
+    );
+    _replaceSession(
+      session.id,
+      session.copyWith(
+        messages: [...session.messages, msg],
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
   }
 
   PersonaProfile? get activePersona {

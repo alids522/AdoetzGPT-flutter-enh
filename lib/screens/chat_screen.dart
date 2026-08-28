@@ -982,7 +982,10 @@ void _showSwarmDialog(BuildContext context, AdoetzAppState app) {
             final task = taskController.text.trim();
             if (task.isEmpty) return;
             Navigator.pop(ctx);
-            app.runSwarmPipeline(objective: task);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Swarm pipeline launched: Architect → Coder → Critic → Researcher')),
+            );
+            app.runSwarmObjective(objective: task);
           },
         ),
       ],
