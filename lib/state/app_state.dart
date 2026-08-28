@@ -117,6 +117,11 @@ class AdoetzAppState extends ChangeNotifier {
   List<EndpointModel> endpointModels = const [];
   List<String> models = const ['gemini-2.5-flash'];
   List<McpServerConfig> mcpServers = const [];
+  List<AiCronJob> cronJobs = const [];
+  List<PersonaProfile> personas = const [];
+  String? activePersonaId;
+  ArenaSessionState arenaState = const ArenaSessionState();
+  Timer? _cronTimer;
 
   String _newId(String prefix) => '$prefix-${_idGenerator.v4()}';
 
@@ -243,6 +248,30 @@ class AdoetzAppState extends ChangeNotifier {
         }));
       }
     }
+
+    _cronTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      final now = DateTime.now();
+      for (final job in cronJobs.where((j) => j.enabled)) {
+        if (_shouldRunCron(job.cronExpression, now)) {
+          unawaited(executeCronJob(job));
+        }
+      }
+    });
+  }
+
+  bool _shouldRunCron(String expression, DateTime now) {
+    try {
+      final parts = expression.trim().split(RegExp(r'\s+'));
+      if (parts.length < 5) return false;
+      final minute = parts[0];
+      final hour = parts[1];
+
+      final matchMin = minute == '*' || int.tryParse(minute) == now.minute;
+      final matchHour = hour == '*' || int.tryParse(hour) == now.hour;
+      return matchMin && matchHour;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _pullRemoteStateAfterStartup() async {
@@ -323,6 +352,8 @@ class AdoetzAppState extends ChangeNotifier {
       tokenUsageData: tokenUsageData,
       customCounters: customCounters,
       mcpServers: mcpServers,
+      cronJobs: cronJobs,
+      personas: personas,
       lastSyncAt: lastSyncAt,
       savedAt: savedAt,
     );
@@ -365,6 +396,8 @@ class AdoetzAppState extends ChangeNotifier {
     modelOutputCosts = state.modelOutputCosts;
     modelCacheHitCosts = state.modelCacheHitCosts;
     mcpServers = state.mcpServers;
+    cronJobs = state.cronJobs;
+    personas = state.personas;
     if (notify) notifyListeners();
   }
 
@@ -516,6 +549,8 @@ class AdoetzAppState extends ChangeNotifier {
       tokenUsageData: mergedUsage,
       customCounters: counterMap.values.toList(),
       mcpServers: remoteIsNewer ? remote.mcpServers : local.mcpServers,
+      cronJobs: remoteIsNewer ? remote.cronJobs : local.cronJobs,
+      personas: remoteIsNewer ? remote.personas : local.personas,
       soundEffectsEnabled: remoteIsNewer
           ? remote.soundEffectsEnabled
           : local.soundEffectsEnabled,
@@ -1054,6 +1089,21 @@ class AdoetzAppState extends ChangeNotifier {
 
   void toggleThinkingMode() {
     isThinkingMode = !isThinkingMode;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void setThinkingMode(bool enabled) {
+    if (isThinkingMode == enabled) return;
+    isThinkingMode = enabled;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void setThinkingEffort(ThinkingEffort effort) {
+    if (genSettings.thinkingEffort == effort) return;
+    unawaited(HapticFeedback.lightImpact());
+    genSettings = genSettings.copyWith(thinkingEffort: effort);
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
@@ -2468,9 +2518,22 @@ class AdoetzAppState extends ChangeNotifier {
     Session session,
     ChatTarget target,
   ) {
+    final persona = activePersona;
+    var resultPrompt = prompt;
+    if (persona != null && persona.systemPrompt.trim().isNotEmpty) {
+      resultPrompt = '[Persona: ${persona.name} - ${persona.tagline}]\nSystem: ${persona.systemPrompt}\n[End Persona]\n\n$resultPrompt';
+    }
+
+    final summary = session.compactionSummary;
+    if (summary != null && summary.summaryText.trim().isNotEmpty) {
+      final factsText = summary.keyFacts.isNotEmpty ? '\nKey Facts: ${summary.keyFacts.join("; ")}' : '';
+      final constraintsText = summary.activeConstraints.isNotEmpty ? '\nActive Constraints: ${summary.activeConstraints.join("; ")}' : '';
+      resultPrompt = '[Compacted Prior Context: ${summary.summaryText}$factsText$constraintsText]\n\n$resultPrompt';
+    }
+
     final handoff = session.handoffSummary.trim();
-    if (handoff.isEmpty || target.isAgentServer) return prompt;
-    return '[Target handoff summary]\n$handoff\n[End handoff summary]\n\n$prompt';
+    if (handoff.isEmpty || target.isAgentServer) return resultPrompt;
+    return '[Target handoff summary]\n$handoff\n[End handoff summary]\n\n$resultPrompt';
   }
 
   List<Message> _historyForRequest(Session session) {
@@ -2537,6 +2600,395 @@ class AdoetzAppState extends ChangeNotifier {
     customCounters = value;
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
+  }
+
+  // --- Multi-Model Arena & AI Engine Methods ---
+
+  Future<void> runArenaComparison({
+    required String prompt,
+    required List<String> modelsToCompare,
+    List<AttachmentData> attachments = const [],
+  }) async {
+    if (modelsToCompare.isEmpty || prompt.trim().isEmpty) return;
+
+    final branches = modelsToCompare.map((m) {
+      return ArenaBranchResult(
+        id: _newId('arena-branch'),
+        model: m,
+        displayName: formatTargetName(m),
+        provider: _modelProviderLabel(m),
+        status: ArenaBranchStatus.streaming,
+      );
+    }).toList();
+
+    arenaState = ArenaSessionState(
+      isActive: true,
+      models: modelsToCompare,
+      branches: branches,
+      prompt: prompt,
+    );
+    notifyListeners();
+
+    final futures = branches.map((branch) async {
+      final startTime = DateTime.now();
+      int? ttft;
+      final target = ChatTarget.model(branch.model, provider: branch.provider);
+      final request = _requestConfigForTarget(target);
+      final history = _historyForRequest(currentSession);
+      final genId = _newId('arena-gen');
+
+      try {
+        final response = await _ai.sendMessage(
+          prompt: prompt,
+          attachments: attachments,
+          history: history,
+          selectedModel: request.model,
+          endpoints: request.endpoints,
+          endpointModels: request.endpointModels,
+          contextLimit: request.contextWindow,
+          genSettings: genSettings,
+          voiceSettings: voiceSettings,
+          geminiApiKey: geminiApiKey,
+          memories: genSettings.memoryEnabled ? memories : const [],
+          thinkingMode: isThinkingMode,
+          artifactMode: isArtifactMode,
+          syncSettings: syncSettings,
+          generationId: genId,
+          mcpService: mcpService,
+          onText: (chunk) {
+            ttft ??= DateTime.now().difference(startTime).inMilliseconds;
+            final idx = arenaState.branches.indexWhere((b) => b.id == branch.id);
+            if (idx >= 0) {
+              final updatedBranch = arenaState.branches[idx].copyWith(
+                text: chunk,
+                status: ArenaBranchStatus.streaming,
+                timeToFirstTokenMs: ttft,
+              );
+              final nextBranches = List<ArenaBranchResult>.from(arenaState.branches);
+              nextBranches[idx] = updatedBranch;
+              arenaState = arenaState.copyWith(branches: nextBranches);
+              notifyListeners();
+            }
+          },
+        );
+
+        final totalTime = DateTime.now().difference(startTime).inMilliseconds;
+        final outputTokens = response.outputTokens > 0 ? response.outputTokens : countTokens(response.text);
+        final tps = totalTime > 0 ? (outputTokens / (totalTime / 1000.0)) : 0.0;
+        final inCost = modelInputCosts[branch.model] ?? 0.0;
+        final outCost = modelOutputCosts[branch.model] ?? 0.0;
+        final estimatedCost = (response.inputTokens * inCost + outputTokens * outCost) / 1000000.0;
+
+        final idx = arenaState.branches.indexWhere((b) => b.id == branch.id);
+        if (idx >= 0) {
+          final updatedBranch = arenaState.branches[idx].copyWith(
+            text: response.text,
+            status: ArenaBranchStatus.completed,
+            timeToFirstTokenMs: ttft ?? totalTime,
+            totalTimeMs: totalTime,
+            inputTokens: response.inputTokens,
+            outputTokens: outputTokens,
+            cachedTokens: response.cachedTokens,
+            tokensPerSecond: tps,
+            estimatedCostUsd: estimatedCost,
+          );
+          final nextBranches = List<ArenaBranchResult>.from(arenaState.branches);
+          nextBranches[idx] = updatedBranch;
+          arenaState = arenaState.copyWith(branches: nextBranches);
+          notifyListeners();
+        }
+      } catch (err) {
+        final idx = arenaState.branches.indexWhere((b) => b.id == branch.id);
+        if (idx >= 0) {
+          final updatedBranch = arenaState.branches[idx].copyWith(
+            status: ArenaBranchStatus.failed,
+            error: err.toString().replaceFirst('Exception: ', ''),
+          );
+          final nextBranches = List<ArenaBranchResult>.from(arenaState.branches);
+          nextBranches[idx] = updatedBranch;
+          arenaState = arenaState.copyWith(branches: nextBranches);
+          notifyListeners();
+        }
+      }
+    });
+
+    await Future.wait(futures);
+  }
+
+  void selectArenaWinner(ArenaBranchResult winner) {
+    final session = currentSession;
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: _newId('msg-user'),
+      text: arenaState.prompt,
+      sender: 'user',
+      timestamp: DateFormat('hh:mm a').format(now),
+      tokenCount: countTokens(arenaState.prompt),
+    );
+    final botMsg = Message(
+      id: _newId('msg-bot'),
+      text: winner.text,
+      sender: 'bot',
+      timestamp: DateFormat('hh:mm a').format(now),
+      model: winner.model,
+      tokenCount: winner.outputTokens,
+      generationTimeMs: winner.totalTimeMs,
+    );
+
+    final updatedSession = session.copyWith(
+      messages: [...session.messages, userMsg, botMsg],
+      updatedAt: now.millisecondsSinceEpoch,
+    );
+    _replaceSession(session.id, updatedSession);
+
+    arenaState = const ArenaSessionState();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void closeArena() {
+    arenaState = const ArenaSessionState();
+    notifyListeners();
+  }
+
+  // --- Semantic Context Compactor ---
+
+  Future<void> compactCurrentSession({int keepRecentMessages = 6}) async {
+    final session = currentSession;
+    if (session.messages.length <= keepRecentMessages + 2) return;
+
+    final toCompact = session.messages.sublist(0, session.messages.length - keepRecentMessages);
+    final recent = session.messages.sublist(session.messages.length - keepRecentMessages);
+
+    final conversationText = toCompact.map((m) => '${m.isUser ? "User" : "Assistant"}: ${m.text}').join('\n');
+    final compactionPrompt =
+        'Compact this conversation history into a structured summary for context optimization.\n'
+        'Extract: 1. Main summary (concise) 2. Key facts learned 3. Active constraints or preferences.\n'
+        'Output valid JSON: {"summary": "...", "facts": ["..."], "constraints": ["..."]}\n\n'
+        '$conversationText';
+
+    try {
+      final response = await _ai.sendMessage(
+        prompt: compactionPrompt,
+        history: const [],
+        selectedModel: selectedModel,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+        contextLimit: 8192,
+        genSettings: genSettings,
+        voiceSettings: voiceSettings,
+        geminiApiKey: geminiApiKey,
+        syncSettings: syncSettings,
+      );
+
+      Map<String, dynamic>? parsed;
+      try {
+        final raw = response.text.replaceAll('```json', '').replaceAll('```', '').trim();
+        parsed = jsonDecode(raw) as Map<String, dynamic>?;
+      } catch (_) {}
+
+      final summaryText = parsed?['summary']?.toString() ?? response.text;
+      final facts = (parsed?['facts'] as List? ?? []).map((e) => e.toString()).toList();
+      final constraints = (parsed?['constraints'] as List? ?? []).map((e) => e.toString()).toList();
+
+      final compaction = ConversationSummaryCompaction(
+        id: _newId('compaction'),
+        originalMessageCount: toCompact.length,
+        summaryText: summaryText,
+        keyFacts: facts,
+        activeConstraints: constraints,
+        compactedAt: DateTime.now().millisecondsSinceEpoch,
+        startMessageId: toCompact.first.id,
+        endMessageId: toCompact.last.id,
+      );
+
+      final updatedSession = session.copyWith(
+        messages: recent,
+        compactionSummary: compaction,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      _replaceSession(session.id, updatedSession);
+      notifyListeners();
+      unawaited(_persistAndScheduleRemote());
+    } catch (e) {
+      debugPrint('Compaction failed: $e');
+    }
+  }
+
+  // --- Multi-Agent Swarm Orchestration ---
+
+  Future<void> runSwarmPipeline({
+    required String task,
+    required List<SwarmAgent> agents,
+    void Function(SwarmExecutionStep step)? onStepCompleted,
+  }) async {
+    if (agents.isEmpty || task.trim().isEmpty) return;
+
+    var currentContext = task;
+    final executionSteps = <SwarmExecutionStep>[];
+
+    for (final agent in agents.where((a) => a.enabled)) {
+      final stepStart = DateTime.now();
+      final prompt = 'Role: ${agent.name} (${agent.role.name})\n'
+          'Instructions: ${agent.systemPrompt}\n\n'
+          'Current Pipeline Context/Input:\n$currentContext\n\n'
+          'Execute your role thoroughly and provide your output.';
+
+      try {
+        final target = ChatTarget.model(agent.model, provider: _modelProviderLabel(agent.model));
+        final request = _requestConfigForTarget(target);
+
+        final response = await _ai.sendMessage(
+          prompt: prompt,
+          history: const [],
+          selectedModel: request.model,
+          endpoints: request.endpoints,
+          endpointModels: request.endpointModels,
+          contextLimit: request.contextWindow,
+          genSettings: genSettings,
+          voiceSettings: voiceSettings,
+          geminiApiKey: geminiApiKey,
+          syncSettings: syncSettings,
+        );
+
+        final duration = DateTime.now().difference(stepStart).inMilliseconds;
+        final step = SwarmExecutionStep(
+          agentId: agent.id,
+          agentName: agent.name,
+          role: agent.role,
+          input: currentContext,
+          output: response.text,
+          status: 'completed',
+          durationMs: duration,
+          tokenCount: response.outputTokens,
+        );
+        executionSteps.add(step);
+        onStepCompleted?.call(step);
+        currentContext = '${currentContext}\n\n[Step: ${agent.name} (${agent.role.name})]:\n${response.text}';
+      } catch (err) {
+        final duration = DateTime.now().difference(stepStart).inMilliseconds;
+        final step = SwarmExecutionStep(
+          agentId: agent.id,
+          agentName: agent.name,
+          role: agent.role,
+          input: currentContext,
+          output: 'Error: $err',
+          status: 'failed',
+          durationMs: duration,
+        );
+        executionSteps.add(step);
+        onStepCompleted?.call(step);
+        break;
+      }
+    }
+  }
+
+  // --- Background AI Cron & Task Automation ---
+
+  void addCronJob(AiCronJob job) {
+    cronJobs = [...cronJobs.where((j) => j.id != job.id), job];
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void removeCronJob(String id) {
+    cronJobs = cronJobs.where((j) => j.id != id).toList();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void toggleCronJob(String id, bool enabled) {
+    cronJobs = cronJobs.map((j) => j.id == id ? j.copyWith(enabled: enabled) : j).toList();
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  Future<void> executeCronJob(AiCronJob job) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    try {
+      final target = ChatTarget.model(job.targetModel, provider: _modelProviderLabel(job.targetModel));
+      final request = _requestConfigForTarget(target);
+
+      final response = await _ai.sendMessage(
+        prompt: job.prompt,
+        history: const [],
+        selectedModel: request.model,
+        endpoints: request.endpoints,
+        endpointModels: request.endpointModels,
+        contextLimit: request.contextWindow,
+        genSettings: genSettings,
+        voiceSettings: voiceSettings,
+        geminiApiKey: geminiApiKey,
+        syncSettings: syncSettings,
+      );
+
+      final updatedJob = job.copyWith(
+        lastRunAt: now,
+        lastRunStatus: 'success',
+        lastRunOutput: response.text,
+        updatedAt: now,
+      );
+      addCronJob(updatedJob);
+
+      if (job.destinationSessionId != null && job.destinationSessionId!.isNotEmpty) {
+        final targetSession = sessions.where((s) => s.id == job.destinationSessionId).firstOrNull;
+        if (targetSession != null) {
+          final nowDt = DateTime.now();
+          final userMsg = Message(
+            id: _newId('cron-user'),
+            text: '[Scheduled Cron: ${job.title}]\n${job.prompt}',
+            sender: 'user',
+            timestamp: DateFormat('hh:mm a').format(nowDt),
+          );
+          final botMsg = Message(
+            id: _newId('cron-bot'),
+            text: response.text,
+            sender: 'bot',
+            timestamp: DateFormat('hh:mm a').format(nowDt),
+            model: job.targetModel,
+          );
+          _replaceSession(
+            targetSession.id,
+            targetSession.copyWith(
+              messages: [...targetSession.messages, userMsg, botMsg],
+              updatedAt: now,
+            ),
+          );
+        }
+      }
+    } catch (err) {
+      final updatedJob = job.copyWith(
+        lastRunAt: now,
+        lastRunStatus: 'failed: $err',
+        updatedAt: now,
+      );
+      addCronJob(updatedJob);
+    }
+  }
+
+  // --- Persona Studio ---
+
+  void addPersona(PersonaProfile persona) {
+    personas = [...personas.where((p) => p.id != persona.id), persona];
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void removePersona(String id) {
+    personas = personas.where((p) => p.id != id).toList();
+    if (activePersonaId == id) activePersonaId = null;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+  }
+
+  void setActivePersona(String? id) {
+    activePersonaId = id;
+    notifyListeners();
+  }
+
+  PersonaProfile? get activePersona {
+    if (activePersonaId == null) return null;
+    return personas.where((p) => p.id == activePersonaId).firstOrNull;
   }
 
   void resetTokenUsage() {

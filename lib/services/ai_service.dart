@@ -509,7 +509,7 @@ $chatHistory
         ? ''
         : '\n\n=== IMPORTANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
     final thinkingInstruction = thinkingMode
-        ? ' Start with concise reasoning enclosed in <think>...</think> tags before the final answer.'
+        ? ' Start with ${genSettings.thinkingEffort == ThinkingEffort.auto ? "concise" : thinkingEffortLabel(genSettings.thinkingEffort).toLowerCase()} reasoning enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, reasoning_content, or <think> tags. Answer directly.';
     final systemText =
         '${_systemText(voiceSettings)}$thinkingInstruction\n\nPay attention to any user context or memories shared in the conversation.${artifactMode ? _artifactInstruction : ''}$memoryText';
@@ -615,6 +615,20 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             selectedModel.toLowerCase().contains('deepseek')) ...{
           'include_reasoning': false,
           'thinking': {'type': 'disabled'},
+        },
+        if (thinkingMode) ...{
+          if (genSettings.thinkingEffort != ThinkingEffort.auto) ...{
+            'reasoning_effort': switch (genSettings.thinkingEffort) {
+              ThinkingEffort.light => 'low',
+              ThinkingEffort.medium => 'medium',
+              ThinkingEffort.high => 'high',
+              ThinkingEffort.xhigh => 'high',
+              _ => 'medium',
+            },
+          },
+          if (thinkingBudgetTokens(genSettings.thinkingEffort) > 0) ...{
+            'max_reasoning_tokens': thinkingBudgetTokens(genSettings.thinkingEffort),
+          },
         },
       };
 
@@ -964,7 +978,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         ? ''
         : '\n\n=== IMPORTANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
     final thinkingInstruction = thinkingMode
-        ? ' Start with a thinking process enclosed in <think>...</think> tags before the final answer.'
+        ? ' Start with a ${genSettings.thinkingEffort == ThinkingEffort.auto ? "" : "${thinkingEffortLabel(genSettings.thinkingEffort).toLowerCase()} "}thinking process enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, thoughts, or <think> tags. Answer directly.';
     final systemText =
         '${_systemText(voiceSettings)}$thinkingInstruction\n\nFORMATTING RULE: When providing code, always wrap it in Markdown triple backticks with the appropriate language identifier.${artifactMode ? _artifactInstruction : ''}$memoryList';
@@ -1007,8 +1021,12 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         'topP': genSettings.topP,
         'topK': genSettings.topK,
         'maxOutputTokens': genSettings.maxOutputTokens,
-        if (thinkingMode && model.toLowerCase().contains('thinking'))
-          'thinkingConfig': {'includeThoughts': true},
+        if (thinkingMode && (model.toLowerCase().contains('thinking') || model.toLowerCase().contains('2.5') || model.toLowerCase().contains('2.0')))
+          'thinkingConfig': {
+            'includeThoughts': true,
+            if (thinkingBudgetTokens(genSettings.thinkingEffort) > 0)
+              'thinkingBudget': thinkingBudgetTokens(genSettings.thinkingEffort),
+          },
       },
     };
 

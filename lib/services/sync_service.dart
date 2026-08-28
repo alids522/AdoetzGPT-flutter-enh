@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import 'package:uuid/uuid.dart';
 
 import '../models.dart';
+import '../utils/crypto_utils.dart';
 
 class AuthResult {
   const AuthResult({required this.user, required this.token, this.remoteState});
@@ -308,7 +309,7 @@ class SyncService {
         ?.where((id) => id.trim().isNotEmpty)
         .toSet();
     if (!settingsChanged && changedIds != null && changedIds.isEmpty) return;
-    
+
     final errors = <String>[];
 
     if (settings.useSupabase) {
@@ -318,36 +319,46 @@ class SyncService {
       final client = _supabaseSessionClient(settings, token);
       final userId = state.currentUser?.id;
       if (userId == null) return;
-      
+
       try {
         if (settingsChanged) {
           final settingsJson = _remoteStateJson(state);
           settingsJson.remove('sessions');
+          final rawSettingsStr = jsonEncode(settingsJson);
+          final processedSettings = settings.e2eeEnabled && settings.e2eePassphrase.isNotEmpty
+              ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSettingsStr, settings.e2eePassphrase)}
+              : settingsJson;
+
           await client.from('user_settings').upsert({
             'user_id': userId,
-            'state': settingsJson,
+            'state': processedSettings,
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           });
         }
-        
+
         final sessionCountRes = await client
             .from('chat_sessions')
             .select('id')
             .eq('user_id', userId)
             .limit(1);
         final isNewDb = sessionCountRes.isEmpty;
-        
+
         final sessionsToPush = isNewDb ? state.sessions : _sessionsForDelta(
           state,
           lastSyncAt: lastSyncAt,
           changedSessionIds: changedIds,
         );
-            
+
         for (final s in sessionsToPush) {
+          final rawSessionStr = jsonEncode(s.toJson());
+          final processedSession = settings.e2eeEnabled && settings.e2eePassphrase.isNotEmpty
+              ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSessionStr, settings.e2eePassphrase)}
+              : s.toJson();
+
           await client.from('chat_sessions').upsert({
             'id': s.id,
             'user_id': userId,
-            'session': s.toJson(),
+            'session': processedSession,
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           });
         }
@@ -366,6 +377,8 @@ class SyncService {
           lastSyncAt: lastSyncAt,
           changedSessionIds: changedIds,
           settingsChanged: settingsChanged,
+          e2eeEnabled: settings.e2eeEnabled,
+          e2eePassphrase: settings.e2eePassphrase,
         );
       } catch (e) {
         errors.add('Postgres Primary Error: $e');
@@ -377,17 +390,29 @@ class SyncService {
           lastSyncAt: lastSyncAt,
           changedSessionIds: changedIds,
         );
+        final settingsJson = (() {
+          final s = _remoteStateJson(state);
+          s.remove('sessions');
+          return s;
+        })();
+        final rawSettingsStr = jsonEncode(settingsJson);
+        final processedSettings = settings.e2eeEnabled && settings.e2eePassphrase.isNotEmpty
+            ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSettingsStr, settings.e2eePassphrase)}
+            : settingsJson;
+
         final response = await _postJson(
           settings,
           '/api/sync/push',
           {
-            'settings': (() { 
-              final s = _remoteStateJson(state); 
-              s.remove('sessions'); 
-              return s; 
-            })(),
+            'settings': processedSettings,
             'sessions': sessionsToPush
-                .map((s) => {'id': s.id, 'session': s.toJson()})
+                .map((s) {
+                  final rawSessionStr = jsonEncode(s.toJson());
+                  final processedSession = settings.e2eeEnabled && settings.e2eePassphrase.isNotEmpty
+                      ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSessionStr, settings.e2eePassphrase)}
+                      : s.toJson();
+                  return {'id': s.id, 'session': processedSession};
+                })
                 .toList(),
             'dbConfig': _databasePayload(settings.database),
           },
@@ -413,12 +438,14 @@ class SyncService {
               backupDb: db,
               clonedUserId: state.currentUser!.id,
               clonedUsername: state.currentUser!.username,
-              clonedPasswordHash: state.cachedPasswordHash != null && state.cachedPasswordHash!.isNotEmpty 
-                  ? state.cachedPasswordHash! 
+              clonedPasswordHash: state.cachedPasswordHash != null && state.cachedPasswordHash!.isNotEmpty
+                  ? state.cachedPasswordHash!
                   : r'$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
               lastSyncAt: lastSyncAt,
               changedSessionIds: changedIds,
               settingsChanged: settingsChanged,
+              e2eeEnabled: settings.e2eeEnabled,
+              e2eePassphrase: settings.e2eePassphrase,
             );
           } else if (shouldUseDirectPostgres(settings)) {
             String? userId;
@@ -432,7 +459,7 @@ class SyncService {
                   pg.Sql('SELECT id, username, password_hash FROM ${_quote(_schema(settings.database))}.users WHERE id = \$1'),
                   parameters: [state.currentUser?.id],
                 ).then((r) => r.firstOrNull);
-                
+
                 if (userRow != null) {
                   userId = userRow[0] as String;
                   username = userRow[1] as String;
@@ -451,7 +478,7 @@ class SyncService {
             if (userId == null || username == null) {
               throw Exception('Cannot clone to backup: user account not found in primary DB or local cache.');
             }
-            
+
             await _directPushStateWithClonedUser(
               token: token,
               state: state,
@@ -464,6 +491,8 @@ class SyncService {
               lastSyncAt: lastSyncAt,
               changedSessionIds: changedIds,
               settingsChanged: settingsChanged,
+              e2eeEnabled: settings.e2eeEnabled,
+              e2eePassphrase: settings.e2eePassphrase,
             );
           }
         } catch (e) {
@@ -767,6 +796,8 @@ class SyncService {
     int? lastSyncAt,
     Set<String>? changedSessionIds,
     bool settingsChanged = true,
+    bool e2eeEnabled = false,
+    String e2eePassphrase = '',
   }) async {
     final conn = await _open(backupDb);
     try {
@@ -788,13 +819,18 @@ class SyncService {
       );
 
       final targetUserId = userResult.first[0] as String;
-      
+
       await conn.execute('BEGIN');
       if (settingsChanged) {
         final settingsJson = state.toJson(includeSecrets: true);
         settingsJson
           ..remove('sessions')
           ..remove('lastSyncAt');
+        final rawSettingsStr = jsonEncode(settingsJson);
+        final processedSettings = e2eeEnabled && e2eePassphrase.isNotEmpty
+            ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSettingsStr, e2eePassphrase)}
+            : settingsJson;
+
         await conn.execute(
           pg.Sql.named(
             'INSERT INTO ${_quote(schema)}."user_settings" (user_id, state) '
@@ -803,23 +839,28 @@ class SyncService {
           ),
           parameters: {
             'id': targetUserId,
-            'state': jsonEncode(settingsJson),
+            'state': jsonEncode(processedSettings),
           },
         );
       }
-      
+
       final sessionCountResult = await conn.execute(
         pg.Sql('SELECT COUNT(*) FROM ${_quote(schema)}."chat_sessions" WHERE user_id = \$1'),
         parameters: [targetUserId],
       );
       final isNewDb = (sessionCountResult.first[0] as int) == 0;
-      
+
       final sessionsToPush = isNewDb ? state.sessions : _sessionsForDelta(
         state,
         lastSyncAt: lastSyncAt,
         changedSessionIds: changedSessionIds,
       );
       for (final s in sessionsToPush) {
+        final rawSessionStr = jsonEncode(s.toJson());
+        final processedSession = e2eeEnabled && e2eePassphrase.isNotEmpty
+            ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSessionStr, e2eePassphrase)}
+            : s.toJson();
+
         await conn.execute(
           pg.Sql.named(
             'INSERT INTO ${_quote(schema)}."chat_sessions" (id, user_id, session) '
@@ -829,7 +870,7 @@ class SyncService {
           parameters: {
             'sid': s.id,
             'uid': targetUserId,
-            'session': jsonEncode(s.toJson()),
+            'session': jsonEncode(processedSession),
           },
         );
       }
@@ -847,6 +888,8 @@ class SyncService {
     int? lastSyncAt,
     Set<String>? changedSessionIds,
     bool settingsChanged = true,
+    bool e2eeEnabled = false,
+    String e2eePassphrase = '',
   }
   ) async {
     final userId = _directUserId(token);
@@ -861,12 +904,17 @@ class SyncService {
       if (settingsChanged) {
         final stateJson = _remoteStateJson(state);
         stateJson.remove('sessions');
+        final rawSettingsStr = jsonEncode(stateJson);
+        final processedSettings = e2eeEnabled && e2eePassphrase.isNotEmpty
+            ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSettingsStr, e2eePassphrase)}
+            : stateJson;
+
         await conn.execute(
           pg.Sql(
             'INSERT INTO ${_quote(schema)}.user_settings (user_id, state, updated_at) VALUES (\$1, \$2::jsonb, NOW()) '
             'ON CONFLICT (user_id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()',
           ),
-          parameters: [userId, jsonEncode(stateJson)],
+          parameters: [userId, jsonEncode(processedSettings)],
         );
       }
 
@@ -875,20 +923,25 @@ class SyncService {
         parameters: [userId],
       );
       final isNewDb = (sessionCountResult.first[0] as int) == 0;
-      
+
       final sessionsToPush = isNewDb ? state.sessions : _sessionsForDelta(
         state,
         lastSyncAt: lastSyncAt,
         changedSessionIds: changedSessionIds,
       );
-          
+
       for (final s in sessionsToPush) {
+        final rawSessionStr = jsonEncode(s.toJson());
+        final processedSession = e2eeEnabled && e2eePassphrase.isNotEmpty
+            ? {'e2ee_payload': CryptoUtils.encryptPayload(rawSessionStr, e2eePassphrase)}
+            : s.toJson();
+
         await conn.execute(
           pg.Sql(
             'INSERT INTO ${_quote(schema)}.chat_sessions (id, user_id, session, updated_at) VALUES (\$1, \$2, \$3::jsonb, NOW()) '
             'ON CONFLICT (id) DO UPDATE SET session = EXCLUDED.session, updated_at = NOW()',
           ),
-          parameters: [s.id, userId, jsonEncode(s.toJson())],
+          parameters: [s.id, userId, jsonEncode(processedSession)],
         );
       }
       await conn.execute('COMMIT');

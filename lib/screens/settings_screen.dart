@@ -30,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     'AI & Generation',
     'Voice & Live',
     'Integrations',
+    'Cron & Tasks',
     'Sync & Data',
   ];
 
@@ -140,6 +141,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
               if (_selectedCategory == 'Voice & Live') ...[
                 _VoiceSection(copy: copy),
+              ],
+              if (_selectedCategory == 'Cron & Tasks') ...[
+                const _CronJobsSection(),
               ],
               if (_selectedCategory == 'Sync & Data') ...[
                 _SyncSection(
@@ -396,6 +400,67 @@ class _GenerationParametersSection extends StatelessWidget {
                 settings.copyWith(maxOutputTokens: val.round()),
               );
             },
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Default Thinking Effort',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: p.onSurface,
+                ),
+              ),
+              Text(
+                thinkingEffortLabel(settings.thinkingEffort),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: switch (settings.thinkingEffort) {
+                    ThinkingEffort.auto => const Color(0xfffacc15),
+                    ThinkingEffort.light => const Color(0xff34d399),
+                    ThinkingEffort.medium => const Color(0xff38bdf8),
+                    ThinkingEffort.high => const Color(0xffa855f7),
+                    ThinkingEffort.xhigh => const Color(0xfff43f5e),
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: ThinkingEffort.values.map((effort) {
+                final isSelected = settings.thinkingEffort == effort;
+                final effortColor = switch (effort) {
+                  ThinkingEffort.auto => const Color(0xfffacc15),
+                  ThinkingEffort.light => const Color(0xff34d399),
+                  ThinkingEffort.medium => const Color(0xff38bdf8),
+                  ThinkingEffort.high => const Color(0xffa855f7),
+                  ThinkingEffort.xhigh => const Color(0xfff43f5e),
+                };
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    selected: isSelected,
+                    selectedColor: effortColor.withValues(alpha: 0.2),
+                    checkmarkColor: effortColor,
+                    labelStyle: TextStyle(
+                      fontSize: 11,
+                      fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                      color: isSelected ? effortColor : p.onSurfaceVariant,
+                    ),
+                    label: Text(thinkingEffortLabel(effort)),
+                    onSelected: (_) {
+                      app.setThinkingEffort(effort);
+                    },
+                  ),
+                );
+              }).toList(),
+            ),
           ),
         ],
       ),
@@ -691,6 +756,151 @@ class _TitleGenerationSection extends StatelessWidget {
   }
 }
 
+class _CronJobsSection extends StatelessWidget {
+  const _CronJobsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: SectionHeader(
+                  icon: LucideIcons.clock,
+                  title: 'AI Background Tasks & Cron',
+                  accent: Colors.orangeAccent,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(LucideIcons.plusCircle, size: 20),
+                onPressed: () => _showAddCronDialog(context, app),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Schedule automatic periodic AI prompt executions and background autonomous tasks.',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 14),
+          if (app.cronJobs.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: p.surfaceDim,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: p.outline),
+              ),
+              child: const Center(
+                child: Text('No active scheduled tasks.', style: TextStyle(fontSize: 12)),
+              ),
+            )
+          else
+            ...app.cronJobs.map((job) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: p.surfaceDim,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: p.outline),
+                ),
+                child: ListTile(
+                  dense: true,
+                  title: Text(job.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Prompt: ${job.prompt}\nInterval: Every ${job.intervalMinutes} min${job.lastRunAt != null ? " • Last: ${DateFormat.Hm().format(DateTime.fromMillisecondsSinceEpoch(job.lastRunAt!))}" : ""}'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(LucideIcons.play, size: 16),
+                        onPressed: () => app.executeCronJob(job),
+                        tooltip: 'Run Now',
+                      ),
+                      CupertinoSwitch(
+                        value: job.enabled,
+                        onChanged: (val) => app.toggleCronJob(job.id, val),
+                      ),
+                      IconButton(
+                        icon: const Icon(LucideIcons.trash2, size: 16),
+                        onPressed: () => app.deleteCronJob(job.id),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  void _showAddCronDialog(BuildContext context, AdoetzAppState app) {
+    final nameCtrl = TextEditingController();
+    final promptCtrl = TextEditingController();
+    final intervalCtrl = TextEditingController(text: '60');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Schedule AI Cron Job'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Task Name (e.g., Morning Briefing)'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: promptCtrl,
+              decoration: const InputDecoration(labelText: 'Prompt / Instruction'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: intervalCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Interval (Minutes)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = nameCtrl.text.trim();
+              final prompt = promptCtrl.text.trim();
+              final interval = int.tryParse(intervalCtrl.text.trim()) ?? 60;
+              if (name.isEmpty || prompt.isEmpty) return;
+
+              final job = AiCronJob(
+                id: DateTime.now().millisecondsSinceEpoch.toString(),
+                name: name,
+                prompt: prompt,
+                intervalMinutes: interval,
+                createdAt: DateTime.now().millisecondsSinceEpoch,
+              );
+              app.saveCronJob(job);
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SyncSection extends StatelessWidget {
   const _SyncSection({
     required this.guestUser,
@@ -851,6 +1061,29 @@ class _SyncSection extends StatelessWidget {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Zero-Knowledge E2EE Sync'),
+                  subtitle: const Text('Encrypt chat sessions and settings on device before sync.'),
+                  value: app.syncSettings.e2eeEnabled,
+                  onChanged: (value) => app.updateSyncSettings(
+                    app.syncSettings.copyWith(e2eeEnabled: value),
+                  ),
+                ),
+                if (app.syncSettings.e2eeEnabled) ...[
+                  const SizedBox(height: 12),
+                  _SettingField(
+                    label: 'E2EE Passphrase',
+                    initialValue: app.syncSettings.e2eePassphrase,
+                    obscure: true,
+                    hint: 'Master secret key for payload encryption',
+                    onChanged: (value) => app.updateSyncSettings(
+                      app.syncSettings.copyWith(e2eePassphrase: value),
                     ),
                   ),
                 ],

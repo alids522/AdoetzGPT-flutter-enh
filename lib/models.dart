@@ -152,6 +152,49 @@ enum ToolPermissionMode {
   askBeforeEveryTool,
 }
 
+enum ThinkingEffort {
+  auto,
+  light,
+  medium,
+  high,
+  xhigh,
+}
+
+ThinkingEffort thinkingEffortFromJson(Object? value) {
+  final text = stringValue(value, 'auto').trim().toLowerCase();
+  return switch (text) {
+    'light' || 'low' => ThinkingEffort.light,
+    'medium' || 'med' => ThinkingEffort.medium,
+    'high' => ThinkingEffort.high,
+    'xhigh' || 'extra_high' || 'max' => ThinkingEffort.xhigh,
+    _ => ThinkingEffort.auto,
+  };
+}
+
+String thinkingEffortCode(ThinkingEffort value) => switch (value) {
+  ThinkingEffort.auto => 'auto',
+  ThinkingEffort.light => 'light',
+  ThinkingEffort.medium => 'medium',
+  ThinkingEffort.high => 'high',
+  ThinkingEffort.xhigh => 'xhigh',
+};
+
+String thinkingEffortLabel(ThinkingEffort value) => switch (value) {
+  ThinkingEffort.auto => 'Auto Reasoning',
+  ThinkingEffort.light => 'Light Thinking (~1k)',
+  ThinkingEffort.medium => 'Medium Thinking (~4k)',
+  ThinkingEffort.high => 'High Thinking (~16k)',
+  ThinkingEffort.xhigh => 'Extra High Thinking (~32k)',
+};
+
+int thinkingBudgetTokens(ThinkingEffort value) => switch (value) {
+  ThinkingEffort.auto => 0,
+  ThinkingEffort.light => 1024,
+  ThinkingEffort.medium => 4096,
+  ThinkingEffort.high => 16384,
+  ThinkingEffort.xhigh => 32768,
+};
+
 ToolPermissionMode toolPermissionModeFromJson(Object? value) {
   final text = stringValue(value, 'ask_before_write').trim().toLowerCase();
   return switch (text) {
@@ -368,6 +411,7 @@ class Session {
     this.targetHistory = const [],
     this.handoffSummary = '',
     this.targetSwitchEvents = const [],
+    this.compactionSummary,
   });
 
   final String id;
@@ -383,6 +427,7 @@ class Session {
   final List<String> targetHistory;
   final String handoffSummary;
   final List<TargetSwitchEvent> targetSwitchEvents;
+  final ConversationSummaryCompaction? compactionSummary;
 
   Session copyWith({
     String? id,
@@ -398,12 +443,28 @@ class Session {
     List<String>? targetHistory,
     String? handoffSummary,
     List<TargetSwitchEvent>? targetSwitchEvents,
+    ConversationSummaryCompaction? compactionSummary,
+    bool clearCompaction = false,
   }) {
     return Session(
       id: id ?? this.id,
       title: title ?? this.title,
       messages: messages ?? this.messages,
       createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      pinned: pinned ?? this.pinned,
+      deleted: deleted ?? this.deleted,
+      currentTargetId: currentTargetId ?? this.currentTargetId,
+      startedWithTargetId: startedWithTargetId ?? this.startedWithTargetId,
+      lastTargetId: lastTargetId ?? this.lastTargetId,
+      targetHistory: targetHistory ?? this.targetHistory,
+      handoffSummary: handoffSummary ?? this.handoffSummary,
+      targetSwitchEvents: targetSwitchEvents ?? this.targetSwitchEvents,
+      compactionSummary: clearCompaction
+          ? null
+          : (compactionSummary ?? this.compactionSummary),
+    );
+  }
       updatedAt: updatedAt ?? this.updatedAt,
       pinned: pinned ?? this.pinned,
       deleted: deleted ?? this.deleted,
@@ -484,6 +545,11 @@ class Session {
       targetSwitchEvents: mapList(
         json['target_switch_events'] ?? json['targetSwitchEvents'],
       ).map(TargetSwitchEvent.fromJson).toList(),
+      compactionSummary: json['compactionSummary'] is Map
+          ? ConversationSummaryCompaction.fromJson(
+              Map<String, dynamic>.from(json['compactionSummary']),
+            )
+          : null,
     );
   }
 
@@ -501,6 +567,13 @@ class Session {
     if (lastTargetId.isNotEmpty) 'last_target_id': lastTargetId,
     if (targetHistory.isNotEmpty) 'target_history': targetHistory,
     if (handoffSummary.isNotEmpty) 'handoff_summary': handoffSummary,
+    if (compactionSummary != null)
+      'compactionSummary': compactionSummary!.toJson(),
+    if (targetSwitchEvents.isNotEmpty)
+      'target_switch_events': targetSwitchEvents
+          .map((event) => event.toJson())
+          .toList(),
+  };
     if (targetSwitchEvents.isNotEmpty)
       'target_switch_events': targetSwitchEvents
           .map((event) => event.toJson())
@@ -1030,6 +1103,7 @@ class GenerationSettings {
     this.topK = 40,
     this.maxOutputTokens = 8192,
     this.contextLimit = 128000,
+    this.thinkingEffort = ThinkingEffort.auto,
   });
 
   final bool memoryEnabled;
@@ -1053,6 +1127,7 @@ class GenerationSettings {
   final int topK;
   final int maxOutputTokens;
   final int contextLimit;
+  final ThinkingEffort thinkingEffort;
 
   GenerationSettings copyWith({
     bool? memoryEnabled,
@@ -1076,6 +1151,7 @@ class GenerationSettings {
     int? topK,
     int? maxOutputTokens,
     int? contextLimit,
+    ThinkingEffort? thinkingEffort,
   }) {
     final nextEngine = webSearchEngine ?? this.webSearchEngine;
     return GenerationSettings(
@@ -1103,6 +1179,7 @@ class GenerationSettings {
       topK: topK ?? this.topK,
       maxOutputTokens: maxOutputTokens ?? this.maxOutputTokens,
       contextLimit: contextLimit ?? this.contextLimit,
+      thinkingEffort: thinkingEffort ?? this.thinkingEffort,
     );
   }
 
@@ -1139,6 +1216,7 @@ class GenerationSettings {
       topK: intValue(json['topK'], 40),
       maxOutputTokens: intValue(json['maxOutputTokens'], 8192),
       contextLimit: intValue(json['contextLimit'], 128000),
+      thinkingEffort: thinkingEffortFromJson(json['thinkingEffort']),
     );
   }
 
@@ -1164,6 +1242,7 @@ class GenerationSettings {
     'topK': topK,
     'maxOutputTokens': maxOutputTokens,
     'contextLimit': contextLimit,
+    'thinkingEffort': thinkingEffortCode(thinkingEffort),
   };
 }
 
@@ -1604,6 +1683,8 @@ class SyncSettings {
     this.useSupabase = false,
     this.supabaseUrl = 'https://supabase.alids.app',
     this.supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE3ODE0MjkzOTMsImV4cCI6MjA4Mjc1ODQwMH0.qgQ3hxL9JgRhZ-0vuIAG-myu8w5UeWkG1iNrsjqDvR0',
+    this.e2eeEnabled = false,
+    this.e2eePassphrase = '',
   });
 
   final bool enabled;
@@ -1614,6 +1695,8 @@ class SyncSettings {
   final bool useSupabase;
   final String supabaseUrl;
   final String supabaseAnonKey;
+  final bool e2eeEnabled;
+  final String e2eePassphrase;
 
   SyncSettings copyWith({
     bool? enabled,
@@ -1624,6 +1707,8 @@ class SyncSettings {
     bool? useSupabase,
     String? supabaseUrl,
     String? supabaseAnonKey,
+    bool? e2eeEnabled,
+    String? e2eePassphrase,
   }) {
     return SyncSettings(
       enabled: enabled ?? this.enabled,
@@ -1634,6 +1719,8 @@ class SyncSettings {
       useSupabase: useSupabase ?? this.useSupabase,
       supabaseUrl: supabaseUrl ?? this.supabaseUrl,
       supabaseAnonKey: supabaseAnonKey ?? this.supabaseAnonKey,
+      e2eeEnabled: e2eeEnabled ?? this.e2eeEnabled,
+      e2eePassphrase: e2eePassphrase ?? this.e2eePassphrase,
     );
   }
 
@@ -1659,6 +1746,8 @@ class SyncSettings {
       useSupabase: boolValue(json['useSupabase']),
       supabaseUrl: stringValue(json['supabaseUrl']),
       supabaseAnonKey: stringValue(json['supabaseAnonKey']),
+      e2eeEnabled: boolValue(json['e2eeEnabled']),
+      e2eePassphrase: stringValue(json['e2eePassphrase']),
     );
   }
 
@@ -1673,6 +1762,8 @@ class SyncSettings {
     'useSupabase': useSupabase,
     'supabaseUrl': supabaseUrl,
     if (includePassword) 'supabaseAnonKey': supabaseAnonKey,
+    'e2eeEnabled': e2eeEnabled,
+    if (includePassword) 'e2eePassphrase': e2eePassphrase,
   };
 }
 
@@ -1758,6 +1849,8 @@ class PersistedAppState {
     required this.tokenUsageData,
     required this.customCounters,
     required this.mcpServers,
+    this.cronJobs = const [],
+    this.personas = const [],
     required this.soundEffectsEnabled,
     required this.isLiveVideoEnabled,
     required this.isLiveFrontCamera,
@@ -1792,6 +1885,8 @@ class PersistedAppState {
   final List<TokenUsageRecord> tokenUsageData;
   final List<CustomCounter> customCounters;
   final List<McpServerConfig> mcpServers;
+  final List<AiCronJob> cronJobs;
+  final List<PersonaProfile> personas;
   final bool soundEffectsEnabled;
   final bool isLiveVideoEnabled;
   final bool isLiveFrontCamera;
@@ -1835,6 +1930,8 @@ class PersistedAppState {
       tokenUsageData: const [],
       customCounters: const [],
       mcpServers: const [],
+      cronJobs: const [],
+      personas: const [],
       soundEffectsEnabled: true,
       isLiveVideoEnabled: false,
       isLiveFrontCamera: false,
@@ -1913,6 +2010,12 @@ class PersistedAppState {
       mcpServers: mapList(
         json['mcpServers'],
       ).map(McpServerConfig.fromJson).toList(),
+      cronJobs: mapList(
+        json['cronJobs'],
+      ).map(AiCronJob.fromJson).toList(),
+      personas: mapList(
+        json['personas'],
+      ).map(PersonaProfile.fromJson).toList(),
       soundEffectsEnabled: boolValue(json['soundEffectsEnabled'], true),
       isLiveVideoEnabled: boolValue(json['isLiveVideoEnabled']),
       isLiveFrontCamera: boolValue(json['isLiveFrontCamera']),
@@ -1958,6 +2061,8 @@ class PersistedAppState {
     'tokenUsageData': tokenUsageData.map((item) => item.toJson()).toList(),
     'customCounters': customCounters.map((item) => item.toJson()).toList(),
     'mcpServers': mcpServers.map((item) => item.toJson()).toList(),
+    'cronJobs': cronJobs.map((item) => item.toJson()).toList(),
+    'personas': personas.map((item) => item.toJson()).toList(),
     'soundEffectsEnabled': soundEffectsEnabled,
     'isLiveVideoEnabled': isLiveVideoEnabled,
     'isLiveFrontCamera': isLiveFrontCamera,
@@ -1985,6 +2090,458 @@ String _normalizeVisualTheme(Object? value) {
   };
 }
 
+enum ArenaBranchStatus {
+  idle,
+  streaming,
+  completed,
+  failed,
+}
+
+class ArenaBranchResult {
+  const ArenaBranchResult({
+    required this.id,
+    required this.model,
+    required this.displayName,
+    this.provider = '',
+    this.text = '',
+    this.status = ArenaBranchStatus.idle,
+    this.error,
+    this.timeToFirstTokenMs,
+    this.totalTimeMs,
+    this.inputTokens = 0,
+    this.outputTokens = 0,
+    this.cachedTokens = 0,
+    this.estimatedCostUsd = 0.0,
+    this.tokensPerSecond = 0.0,
+  });
+
+  final String id;
+  final String model;
+  final String displayName;
+  final String provider;
+  final String text;
+  final ArenaBranchStatus status;
+  final String? error;
+  final int? timeToFirstTokenMs;
+  final int? totalTimeMs;
+  final int inputTokens;
+  final int outputTokens;
+  final int cachedTokens;
+  final double estimatedCostUsd;
+  final double tokensPerSecond;
+
+  ArenaBranchResult copyWith({
+    String? id,
+    String? model,
+    String? displayName,
+    String? provider,
+    String? text,
+    ArenaBranchStatus? status,
+    String? error,
+    int? timeToFirstTokenMs,
+    int? totalTimeMs,
+    int? inputTokens,
+    int? outputTokens,
+    int? cachedTokens,
+    double? estimatedCostUsd,
+    double? tokensPerSecond,
+  }) =>
+      ArenaBranchResult(
+        id: id ?? this.id,
+        model: model ?? this.model,
+        displayName: displayName ?? this.displayName,
+        provider: provider ?? this.provider,
+        text: text ?? this.text,
+        status: status ?? this.status,
+        error: error ?? this.error,
+        timeToFirstTokenMs: timeToFirstTokenMs ?? this.timeToFirstTokenMs,
+        totalTimeMs: totalTimeMs ?? this.totalTimeMs,
+        inputTokens: inputTokens ?? this.inputTokens,
+        outputTokens: outputTokens ?? this.outputTokens,
+        cachedTokens: cachedTokens ?? this.cachedTokens,
+        estimatedCostUsd: estimatedCostUsd ?? this.estimatedCostUsd,
+        tokensPerSecond: tokensPerSecond ?? this.tokensPerSecond,
+      );
+
+  factory ArenaBranchResult.fromJson(Map<String, dynamic> json) =>
+      ArenaBranchResult(
+        id: stringValue(json['id']),
+        model: stringValue(json['model']),
+        displayName: stringValue(json['displayName']),
+        provider: stringValue(json['provider']),
+        text: stringValue(json['text']),
+        status: switch (stringValue(json['status'])) {
+          'streaming' => ArenaBranchStatus.streaming,
+          'completed' => ArenaBranchStatus.completed,
+          'failed' => ArenaBranchStatus.failed,
+          _ => ArenaBranchStatus.idle,
+        },
+        error: json['error'] == null ? null : stringValue(json['error']),
+        timeToFirstTokenMs: json['timeToFirstTokenMs'] == null
+            ? null
+            : intValue(json['timeToFirstTokenMs']),
+        totalTimeMs: json['totalTimeMs'] == null
+            ? null
+            : intValue(json['totalTimeMs']),
+        inputTokens: intValue(json['inputTokens']),
+        outputTokens: intValue(json['outputTokens']),
+        cachedTokens: intValue(json['cachedTokens']),
+        estimatedCostUsd: doubleValue(json['estimatedCostUsd']),
+        tokensPerSecond: doubleValue(json['tokensPerSecond']),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'model': model,
+        'displayName': displayName,
+        'provider': provider,
+        'text': text,
+        'status': status.name,
+        if (error != null) 'error': error,
+        if (timeToFirstTokenMs != null) 'timeToFirstTokenMs': timeToFirstTokenMs,
+        if (totalTimeMs != null) 'totalTimeMs': totalTimeMs,
+        'inputTokens': inputTokens,
+        'outputTokens': outputTokens,
+        'cachedTokens': cachedTokens,
+        'estimatedCostUsd': estimatedCostUsd,
+        'tokensPerSecond': tokensPerSecond,
+      };
+}
+
+class ArenaSessionState {
+  const ArenaSessionState({
+    this.isActive = false,
+    this.models = const [],
+    this.branches = const [],
+    this.prompt = '',
+  });
+
+  final bool isActive;
+  final List<String> models;
+  final List<ArenaBranchResult> branches;
+  final String prompt;
+
+  ArenaSessionState copyWith({
+    bool? isActive,
+    List<String>? models,
+    List<ArenaBranchResult>? branches,
+    String? prompt,
+  }) =>
+      ArenaSessionState(
+        isActive: isActive ?? this.isActive,
+        models: models ?? this.models,
+        branches: branches ?? this.branches,
+        prompt: prompt ?? this.prompt,
+      );
+}
+
+class ConversationSummaryCompaction {
+  const ConversationSummaryCompaction({
+    required this.id,
+    required this.originalMessageCount,
+    required this.summaryText,
+    required this.keyFacts,
+    required this.activeConstraints,
+    required this.compactedAt,
+    this.startMessageId,
+    this.endMessageId,
+  });
+
+  final String id;
+  final int originalMessageCount;
+  final String summaryText;
+  final List<String> keyFacts;
+  final List<String> activeConstraints;
+  final int compactedAt;
+  final String? startMessageId;
+  final String? endMessageId;
+
+  factory ConversationSummaryCompaction.fromJson(Map<String, dynamic> json) =>
+      ConversationSummaryCompaction(
+        id: stringValue(json['id']),
+        originalMessageCount: intValue(json['originalMessageCount']),
+        summaryText: stringValue(json['summaryText']),
+        keyFacts: (json['keyFacts'] as List? ?? [])
+            .map((e) => e.toString())
+            .toList(),
+        activeConstraints: (json['activeConstraints'] as List? ?? [])
+            .map((e) => e.toString())
+            .toList(),
+        compactedAt: intValue(json['compactedAt']),
+        startMessageId: json['startMessageId']?.toString(),
+        endMessageId: json['endMessageId']?.toString(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'originalMessageCount': originalMessageCount,
+        'summaryText': summaryText,
+        'keyFacts': keyFacts,
+        'activeConstraints': activeConstraints,
+        'compactedAt': compactedAt,
+        if (startMessageId != null) 'startMessageId': startMessageId,
+        if (endMessageId != null) 'endMessageId': endMessageId,
+      };
+}
+
+enum SwarmAgentRole {
+  orchestrator,
+  architect,
+  coder,
+  critic,
+  researcher,
+  custom,
+}
+
+class SwarmAgent {
+  const SwarmAgent({
+    required this.id,
+    required this.name,
+    required this.role,
+    required this.model,
+    required this.systemPrompt,
+    this.temperature = 0.7,
+    this.iconName = 'bot',
+    this.enabled = true,
+  });
+
+  final String id;
+  final String name;
+  final SwarmAgentRole role;
+  final String model;
+  final String systemPrompt;
+  final double temperature;
+  final String iconName;
+  final bool enabled;
+
+  factory SwarmAgent.fromJson(Map<String, dynamic> json) => SwarmAgent(
+        id: stringValue(json['id']),
+        name: stringValue(json['name']),
+        role: switch (stringValue(json['role'])) {
+          'architect' => SwarmAgentRole.architect,
+          'coder' => SwarmAgentRole.coder,
+          'critic' => SwarmAgentRole.critic,
+          'researcher' => SwarmAgentRole.researcher,
+          'orchestrator' => SwarmAgentRole.orchestrator,
+          _ => SwarmAgentRole.custom,
+        },
+        model: stringValue(json['model'], 'gemini-2.5-flash'),
+        systemPrompt: stringValue(json['systemPrompt']),
+        temperature: doubleValue(json['temperature'], 0.7),
+        iconName: stringValue(json['iconName'], 'bot'),
+        enabled: boolValue(json['enabled'], true),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'role': role.name,
+        'model': model,
+        'systemPrompt': systemPrompt,
+        'temperature': temperature,
+        'iconName': iconName,
+        'enabled': enabled,
+      };
+}
+
+class SwarmExecutionStep {
+  const SwarmExecutionStep({
+    required this.agentId,
+    required this.agentName,
+    required this.role,
+    required this.input,
+    required this.output,
+    required this.status,
+    this.durationMs = 0,
+    this.tokenCount = 0,
+  });
+
+  final String agentId;
+  final String agentName;
+  final SwarmAgentRole role;
+  final String input;
+  final String output;
+  final String status;
+  final int durationMs;
+  final int tokenCount;
+
+  factory SwarmExecutionStep.fromJson(Map<String, dynamic> json) =>
+      SwarmExecutionStep(
+        agentId: stringValue(json['agentId']),
+        agentName: stringValue(json['agentName']),
+        role: switch (stringValue(json['role'])) {
+          'architect' => SwarmAgentRole.architect,
+          'coder' => SwarmAgentRole.coder,
+          'critic' => SwarmAgentRole.critic,
+          'researcher' => SwarmAgentRole.researcher,
+          'orchestrator' => SwarmAgentRole.orchestrator,
+          _ => SwarmAgentRole.custom,
+        },
+        input: stringValue(json['input']),
+        output: stringValue(json['output']),
+        status: stringValue(json['status']),
+        durationMs: intValue(json['durationMs']),
+        tokenCount: intValue(json['tokenCount']),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'agentId': agentId,
+        'agentName': agentName,
+        'role': role.name,
+        'input': input,
+        'output': output,
+        'status': status,
+        'durationMs': durationMs,
+        'tokenCount': tokenCount,
+      };
+}
+
+class AiCronJob {
+  const AiCronJob({
+    required this.id,
+    required this.title,
+    required this.cronExpression,
+    required this.prompt,
+    required this.targetModel,
+    this.enabled = true,
+    this.lastRunAt,
+    this.lastRunStatus = '',
+    this.lastRunOutput = '',
+    this.destinationSessionId,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String title;
+  final String cronExpression;
+  final String prompt;
+  final String targetModel;
+  final bool enabled;
+  final int? lastRunAt;
+  final String lastRunStatus;
+  final String lastRunOutput;
+  final String? destinationSessionId;
+  final int createdAt;
+  final int updatedAt;
+
+  AiCronJob copyWith({
+    String? id,
+    String? title,
+    String? cronExpression,
+    String? prompt,
+    String? targetModel,
+    bool? enabled,
+    int? lastRunAt,
+    String? lastRunStatus,
+    String? lastRunOutput,
+    String? destinationSessionId,
+    int? createdAt,
+    int? updatedAt,
+  }) =>
+      AiCronJob(
+        id: id ?? this.id,
+        title: title ?? this.title,
+        cronExpression: cronExpression ?? this.cronExpression,
+        prompt: prompt ?? this.prompt,
+        targetModel: targetModel ?? this.targetModel,
+        enabled: enabled ?? this.enabled,
+        lastRunAt: lastRunAt ?? this.lastRunAt,
+        lastRunStatus: lastRunStatus ?? this.lastRunStatus,
+        lastRunOutput: lastRunOutput ?? this.lastRunOutput,
+        destinationSessionId:
+            destinationSessionId ?? this.destinationSessionId,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+
+  factory AiCronJob.fromJson(Map<String, dynamic> json) => AiCronJob(
+        id: stringValue(json['id']),
+        title: stringValue(json['title']),
+        cronExpression: stringValue(json['cronExpression'], '0 9 * * *'),
+        prompt: stringValue(json['prompt']),
+        targetModel: stringValue(json['targetModel'], 'gemini-2.5-flash'),
+        enabled: boolValue(json['enabled'], true),
+        lastRunAt: json['lastRunAt'] == null ? null : intValue(json['lastRunAt']),
+        lastRunStatus: stringValue(json['lastRunStatus']),
+        lastRunOutput: stringValue(json['lastRunOutput']),
+        destinationSessionId: json['destinationSessionId']?.toString(),
+        createdAt: intValue(json['createdAt']),
+        updatedAt: intValue(json['updatedAt']),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'cronExpression': cronExpression,
+        'prompt': prompt,
+        'targetModel': targetModel,
+        'enabled': enabled,
+        if (lastRunAt != null) 'lastRunAt': lastRunAt,
+        'lastRunStatus': lastRunStatus,
+        'lastRunOutput': lastRunOutput,
+        if (destinationSessionId != null)
+          'destinationSessionId': destinationSessionId,
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+      };
+}
+
+class PersonaProfile {
+  const PersonaProfile({
+    required this.id,
+    required this.name,
+    required this.avatarEmoji,
+    required this.tagline,
+    required this.systemPrompt,
+    this.temperature = 0.7,
+    this.preferredModel,
+    this.suggestedStarters = const [],
+    this.tags = const [],
+    this.isBuiltIn = false,
+  });
+
+  final String id;
+  final String name;
+  final String avatarEmoji;
+  final String tagline;
+  final String systemPrompt;
+  final double temperature;
+  final String? preferredModel;
+  final List<String> suggestedStarters;
+  final List<String> tags;
+  final bool isBuiltIn;
+
+  factory PersonaProfile.fromJson(Map<String, dynamic> json) => PersonaProfile(
+        id: stringValue(json['id']),
+        name: stringValue(json['name']),
+        avatarEmoji: stringValue(json['avatarEmoji'], '🤖'),
+        tagline: stringValue(json['tagline']),
+        systemPrompt: stringValue(json['systemPrompt']),
+        temperature: doubleValue(json['temperature'], 0.7),
+        preferredModel: json['preferredModel']?.toString(),
+        suggestedStarters: (json['suggestedStarters'] as List? ?? [])
+            .map((e) => e.toString())
+            .toList(),
+        tags: (json['tags'] as List? ?? []).map((e) => e.toString()).toList(),
+        isBuiltIn: boolValue(json['isBuiltIn'], false),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'avatarEmoji': avatarEmoji,
+        'tagline': tagline,
+        'systemPrompt': systemPrompt,
+        'temperature': temperature,
+        if (preferredModel != null) 'preferredModel': preferredModel,
+        'suggestedStarters': suggestedStarters,
+        'tags': tags,
+        'isBuiltIn': isBuiltIn,
+      };
+}
+
 extension _ListFallback<T> on List<T> {
   List<T> ifEmpty(List<T> fallback) => isEmpty ? fallback : this;
 }
+

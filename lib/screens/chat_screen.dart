@@ -156,8 +156,29 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         if (app.isThinkingMode) app.toggleThinkingMode();
         return true;
       }),
-      SlashCommand(name: 'persona', description: 'Open personality selector.', category: 'Thinking', action: (c, app) => false),
-      SlashCommand(name: 'persona default', description: 'Reset personality.', category: 'Thinking', action: (c, app) => false),
+      SlashCommand(name: 'arena', description: 'Open Multi-Model Arena comparison.', category: 'Arena & Swarm', action: (c, app) {
+        _showArenaDialog(c, app);
+        return true;
+      }),
+      SlashCommand(name: 'swarm', description: 'Run Multi-Agent Swarm pipeline.', category: 'Arena & Swarm', action: (c, app) {
+        _showSwarmDialog(c, app);
+        return true;
+      }),
+      SlashCommand(name: 'compact', description: 'Trigger Semantic Context Compaction.', category: 'Memory & Context', action: (c, app) {
+        app.compactCurrentSession();
+        ScaffoldMessenger.of(c).showSnackBar(
+          const SnackBar(content: Text('Semantic compaction initiated for current session.')),
+        );
+        return true;
+      }),
+      SlashCommand(name: 'persona', description: 'Open personality / persona studio.', category: 'Thinking', action: (c, app) {
+        _showPersonaDialog(c, app);
+        return true;
+      }),
+      SlashCommand(name: 'persona default', description: 'Reset to default persona.', category: 'Thinking', action: (c, app) {
+        app.selectPersona(null);
+        return true;
+      }),
       SlashCommand(name: 'system', description: 'Show current system/personality instruction.', category: 'Thinking', action: (c, app) => false),
 
       // Image Tools
@@ -359,6 +380,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   onEditSave: _saveEdit,
                 ),
         ),
+
+        if (app.arenaState.isActive)
+          Positioned(
+            top: 70,
+            left: 12,
+            right: 12,
+            child: _ArenaLiveStage(state: app.arenaState),
+          ),
 
         if (_showScrollToBottom)
           Positioned(
@@ -797,6 +826,364 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (text.isEmpty) return;
     context.read<AdoetzAppState>().editMessage(message.id, text);
     _cancelEdit();
+  }
+}
+
+void _showArenaDialog(BuildContext context, AdoetzAppState app) {
+  final p = AppPalette.fromBrightness(
+    Theme.of(context).brightness == Brightness.dark,
+  );
+  final promptController = TextEditingController();
+  final availableModels = app.models.where((m) => m.trim().isNotEmpty).toList();
+  final selectedModels = <String>{};
+  if (app.selectedModel.isNotEmpty) selectedModels.add(app.selectedModel);
+  if (availableModels.length > 1 && selectedModels.length < 2) {
+    selectedModels.add(availableModels.firstWhere((m) => m != app.selectedModel, orElse: () => availableModels.first));
+  }
+
+  showDialog(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setDlgState) {
+        return AlertDialog(
+          backgroundColor: p.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: p.outline)),
+          title: Row(
+            children: [
+              Icon(LucideIcons.swords, color: p.primary, size: 22),
+              const SizedBox(width: 10),
+              const Text('Multi-Model Arena', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ],
+          ),
+          content: SizedBox(
+            width: math.min(600.0, MediaQuery.of(ctx).size.width - 40),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Select 2 or more models to benchmark side-by-side on TTFT, speed, quality, and cost.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: promptController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      hintText: 'Enter test prompt for comparison...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('Select Models:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: availableModels.map((m) {
+                      final isSel = selectedModels.contains(m);
+                      return FilterChip(
+                        selected: isSel,
+                        label: Text(app.formatTargetName(m), style: const TextStyle(fontSize: 12)),
+                        onSelected: (val) {
+                          setDlgState(() {
+                            if (val) {
+                              selectedModels.add(m);
+                            } else {
+                              if (selectedModels.length > 1) {
+                                selectedModels.remove(m);
+                              }
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(LucideIcons.play, size: 16),
+              label: const Text('Start Arena'),
+              onPressed: selectedModels.length < 2 || promptController.text.trim().isEmpty
+                  ? null
+                  : () {
+                      final pr = promptController.text.trim();
+                      final mods = selectedModels.toList();
+                      Navigator.pop(ctx);
+                      app.runArenaComparison(prompt: pr, modelsToCompare: mods);
+                    },
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+void _showSwarmDialog(BuildContext context, AdoetzAppState app) {
+  final p = AppPalette.fromBrightness(
+    Theme.of(context).brightness == Brightness.dark,
+  );
+  final taskController = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: p.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: p.outline)),
+      title: Row(
+        children: [
+          Icon(LucideIcons.users, color: Colors.purpleAccent, size: 22),
+          const SizedBox(width: 10),
+          const Text('Multi-Agent Swarm', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        ],
+      ),
+      content: SizedBox(
+        width: math.min(600.0, MediaQuery.of(ctx).size.width - 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Coordinate autonomous pipeline: Architect -> Coder -> Critic -> Researcher to achieve complex multi-stage objectives.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: taskController,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                hintText: 'Enter complex mission or prompt for the agent swarm...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          icon: const Icon(LucideIcons.sparkles, size: 16),
+          label: const Text('Launch Swarm'),
+          onPressed: () {
+            final task = taskController.text.trim();
+            if (task.isEmpty) return;
+            Navigator.pop(ctx);
+            app.runSwarmPipeline(objective: task);
+          },
+        ),
+      ],
+    ),
+  );
+}
+
+void _showPersonaDialog(BuildContext context, AdoetzAppState app) {
+  final p = AppPalette.fromBrightness(
+    Theme.of(context).brightness == Brightness.dark,
+  );
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: p.surface,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(LucideIcons.sparkles, color: p.primary, size: 20),
+                    const SizedBox(width: 8),
+                    const Text('Persona Studio', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                TextButton(
+                  onPressed: () {
+                    app.selectPersona(null);
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Reset Default'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...app.personas.map((persona) {
+              final isSelected = app.activePersonaId == persona.id;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? p.primary.withValues(alpha: 0.12) : p.surfaceDim,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: isSelected ? p.primary : p.outline),
+                ),
+                child: ListTile(
+                  leading: Text(persona.avatarEmoji, style: const TextStyle(fontSize: 24)),
+                  title: Text(persona.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(persona.tagline, style: const TextStyle(fontSize: 12)),
+                  trailing: isSelected ? Icon(LucideIcons.check, color: p.primary, size: 20) : null,
+                  onTap: () {
+                    app.selectPersona(isSelected ? null : persona.id);
+                    Navigator.pop(ctx);
+                  },
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _ArenaLiveStage extends StatelessWidget {
+  const _ArenaLiveStage({required this.state});
+
+  final ArenaSessionState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+
+    return Material(
+      color: p.surface,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: p.primary.withValues(alpha: 0.6), width: 1.5),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(LucideIcons.swords, color: p.primary, size: 20),
+                const SizedBox(width: 8),
+                const Text(
+                  'ARENA LIVE BENCHMARK',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 1.2),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(LucideIcons.x, size: 18),
+                  onPressed: () => app.stopGeneration(),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Prompt: "${state.prompt}"',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: p.onSurfaceVariant, fontStyle: FontStyle.italic),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 280),
+              child: ListView(
+                shrinkWrap: true,
+                children: state.branches.map((b) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: p.surfaceDim,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: b.status == ArenaBranchStatus.completed
+                            ? Colors.green.withValues(alpha: 0.5)
+                            : b.status == ArenaBranchStatus.failed
+                                ? Colors.red.withValues(alpha: 0.5)
+                                : p.outline,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                b.displayName,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ),
+                            if (b.status == ArenaBranchStatus.streaming)
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            else if (b.status == ArenaBranchStatus.completed)
+                              FilledButton.tonal(
+                                onPressed: () => app.selectArenaWinner(b),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                child: const Text('Pick Winner', style: TextStyle(fontSize: 11)),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 12,
+                          children: [
+                            if (b.timeToFirstTokenMs != null)
+                              Text('TTFT: ${b.timeToFirstTokenMs}ms', style: const TextStyle(fontSize: 10, fontFamily: 'monospace')),
+                            if (b.tokensPerSecond > 0)
+                              Text('Speed: ${b.tokensPerSecond.toStringAsFixed(1)} t/s', style: const TextStyle(fontSize: 10, fontFamily: 'monospace')),
+                            if (b.outputTokens > 0)
+                              Text('Tokens: ${b.outputTokens}', style: const TextStyle(fontSize: 10, fontFamily: 'monospace')),
+                            if (b.estimatedCostUsd > 0)
+                              Text('Cost: \$${b.estimatedCostUsd.toStringAsFixed(5)}', style: const TextStyle(fontSize: 10, fontFamily: 'monospace')),
+                          ],
+                        ),
+                        if (b.text.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            b.text,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -2415,20 +2802,41 @@ class _InputPod extends StatelessWidget {
     final isHardcoded = contextSource == 'Estimated context length';
     final isCustom = contextSource == 'Custom';
     final compact = MediaQuery.of(context).size.width < 560;
+    final thinkingColor = !app.isThinkingMode
+        ? p.onSurface
+        : switch (app.genSettings.thinkingEffort) {
+            ThinkingEffort.auto => const Color(0xfffacc15),
+            ThinkingEffort.light => const Color(0xff34d399),
+            ThinkingEffort.medium => const Color(0xff38bdf8),
+            ThinkingEffort.high => const Color(0xffa855f7),
+            ThinkingEffort.xhigh => const Color(0xfff43f5e),
+          };
+    final thinkingTooltip = !app.isThinkingMode
+        ? 'Thinking mode: Off (Tap to toggle, Long press to configure)'
+        : 'Thinking: ${thinkingEffortLabel(app.genSettings.thinkingEffort)} (Long press to change)';
+
     final inner = Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 5),
           child: Row(
             children: [
-              RoundIconButton(
-                icon: LucideIcons.lightbulb,
-                size: 30,
-                iconSize: 17,
-                color: app.isThinkingMode
-                    ? const Color(0xfffacc15)
-                    : p.onSurface,
-                onPressed: app.toggleThinkingMode,
+              GestureDetector(
+                onLongPress: () => _showThinkingEffortSelector(context, app),
+                child: RoundIconButton(
+                  icon: LucideIcons.lightbulb,
+                  size: 30,
+                  iconSize: 17,
+                  color: thinkingColor,
+                  tooltip: thinkingTooltip,
+                  onPressed: () {
+                    if (!app.isThinkingMode) {
+                      app.setThinkingMode(true);
+                    } else {
+                      _showThinkingEffortSelector(context, app);
+                    }
+                  },
+                ),
               ),
               RoundIconButton(
                 icon: LucideIcons.globe,
@@ -2819,6 +3227,160 @@ class _InputPod extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _showThinkingEffortSelector(
+    BuildContext context,
+    AdoetzAppState app,
+  ) async {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final currentEffort = app.genSettings.thinkingEffort;
+
+    final selected = await showModalBottomSheet<ThinkingEffort>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border.all(color: p.outline),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: p.outline,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Icon(LucideIcons.lightbulb, size: 20, color: const Color(0xfffacc15)),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Thinking Effort Level',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: p.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Configure reasoning depth and token budget for deep thought models.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: p.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ...ThinkingEffort.values.map((effort) {
+                final isSelected = app.isThinkingMode && currentEffort == effort;
+                final effortColor = switch (effort) {
+                  ThinkingEffort.auto => const Color(0xfffacc15),
+                  ThinkingEffort.light => const Color(0xff34d399),
+                  ThinkingEffort.medium => const Color(0xff38bdf8),
+                  ThinkingEffort.high => const Color(0xffa855f7),
+                  ThinkingEffort.xhigh => const Color(0xfff43f5e),
+                };
+                final effortDesc = switch (effort) {
+                  ThinkingEffort.auto => 'Adaptive model-determined reasoning tokens',
+                  ThinkingEffort.light => 'Fast brief chain-of-thought (~1,024 tokens)',
+                  ThinkingEffort.medium => 'Standard deep reasoning (~4,096 tokens)',
+                  ThinkingEffort.high => 'Comprehensive deep analysis (~16,384 tokens)',
+                  ThinkingEffort.xhigh => 'Maximum reasoning budget (~32,768 tokens)',
+                };
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    color: isSelected
+                        ? effortColor.withValues(alpha: 0.12)
+                        : p.surfaceDim,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => Navigator.pop(context, effort),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 14,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: effortColor,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    thinkingEffortLabel(effort),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                      color: isSelected ? effortColor : p.onSurface,
+                                    ),
+                                  ),
+                                  Text(
+                                    effortDesc,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: p.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (isSelected)
+                              Icon(LucideIcons.check, size: 18, color: effortColor),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 8),
+              if (app.isThinkingMode)
+                OutlinedButton.icon(
+                  onPressed: () {
+                    app.setThinkingMode(false);
+                    Navigator.pop(context);
+                  },
+                  icon: const Icon(LucideIcons.powerOff, size: 16),
+                  label: const Text('Turn Off Thinking Mode'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: p.error,
+                    side: BorderSide(color: p.error.withValues(alpha: 0.4)),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected != null) {
+      app.setThinkingEffort(selected);
+      app.setThinkingMode(true);
+    }
   }
 
   Future<void> _showContextWindowEditor(
