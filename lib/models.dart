@@ -465,17 +465,6 @@ class Session {
           : (compactionSummary ?? this.compactionSummary),
     );
   }
-      updatedAt: updatedAt ?? this.updatedAt,
-      pinned: pinned ?? this.pinned,
-      deleted: deleted ?? this.deleted,
-      currentTargetId: currentTargetId ?? this.currentTargetId,
-      startedWithTargetId: startedWithTargetId ?? this.startedWithTargetId,
-      lastTargetId: lastTargetId ?? this.lastTargetId,
-      targetHistory: targetHistory ?? this.targetHistory,
-      handoffSummary: handoffSummary ?? this.handoffSummary,
-      targetSwitchEvents: targetSwitchEvents ?? this.targetSwitchEvents,
-    );
-  }
 
   factory Session.empty([String? id, String? targetId]) {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -569,11 +558,6 @@ class Session {
     if (handoffSummary.isNotEmpty) 'handoff_summary': handoffSummary,
     if (compactionSummary != null)
       'compactionSummary': compactionSummary!.toJson(),
-    if (targetSwitchEvents.isNotEmpty)
-      'target_switch_events': targetSwitchEvents
-          .map((event) => event.toJson())
-          .toList(),
-  };
     if (targetSwitchEvents.isNotEmpty)
       'target_switch_events': targetSwitchEvents
           .map((event) => event.toJson())
