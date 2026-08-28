@@ -2987,28 +2987,6 @@ class _VoiceOverlay extends StatelessWidget {
     );
   }
 }
-              RoundIconButton(
-                icon: LucideIcons.mic,
-                size: buttonSize,
-                background: recording ? p.error : p.surfaceDim,
-                color: recording ? Colors.white : p.onSurface,
-                onPressed: onRecording,
-              ),
-              const SizedBox(width: 8),
-              RoundIconButton(
-                icon: LucideIcons.x,
-                size: buttonSize,
-                background: p.surfaceDim,
-                color: p.onSurface,
-                onPressed: onClose,
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
 
 class _LiveVideoStage extends StatelessWidget {
   const _LiveVideoStage({required this.app});
