@@ -6,6 +6,14 @@ All notable changes and enhancements to the AdoetzGPT Flutter project are docume
 
 ## [2.1.0-enh] - 2026-08-28 11:55:00 UTC
 
+### 🔧 Post-Release Build Stabilization (2026-08-28 05:45:00 UTC)
+- Removed duplicated statement blocks accidentally left inside `Session.copyWith` and `Session.toJson` (`lib/models.dart`) that broke compilation.
+- Completed all required `AiService.sendMessage` parameters (attachments, memories, thinkingMode, artifactMode, onText, onStatus) across the Arena, Compactor, Swarm, and Cron execution paths (`lib/state/app_state.dart`).
+- Added `AdoetzAppState.selectPersona` alias and `runSwarmObjective` helper that appends the swarm transcript into the active session.
+- Added `defaultSwarmAgents()` 4-role pipeline (Architect → Coder → Critic → Researcher) in `lib/models.dart`.
+- Aligned Settings cron UI with the `AiCronJob` schema (`title` / `cronExpression` / `targetModel`; `addCronJob` / `removeCronJob`) and taught `_shouldRunCron` to match `*/N` step intervals.
+- Verified green CI: Android Release APK and iOS Unsigned IPA builds passing on GitHub Actions.
+
 ### 🌟 Major Feature Expansions & Advanced AI Intelligence
 
 #### 1. Multi-Level Thinking Mode & Dynamic UI
