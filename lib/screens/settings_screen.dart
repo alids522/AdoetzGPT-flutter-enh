@@ -879,7 +879,7 @@ class _CronJobsSection extends StatelessWidget {
             TextField(
               controller: intervalCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Interval (Minutes)',
                 helperText: 'Model: ${app.selectedModel}',
               ),

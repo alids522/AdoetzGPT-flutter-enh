@@ -2696,7 +2696,7 @@ class AdoetzAppState extends ChangeNotifier {
             totalTimeMs: totalTime,
             inputTokens: response.inputTokens,
             outputTokens: outputTokens,
-            cachedTokens: response.cachedTokens,
+            cachedTokens: response.cachedInputTokens,
             tokensPerSecond: tps,
             estimatedCostUsd: estimatedCost,
           );
