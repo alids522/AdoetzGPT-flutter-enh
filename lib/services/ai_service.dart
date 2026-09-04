@@ -343,6 +343,9 @@ class AiService {
         history: history,
         selectedModel: modelName,
         endpoint: endpoint,
+        endpoints: endpoints,
+        endpointModels: endpointModels,
+        geminiApiKey: geminiApiKey,
         searchContext: searchContext,
         voiceSettings: voiceSettings,
         genSettings: genSettings,
@@ -488,6 +491,9 @@ $chatHistory
     required List<Message> history,
     required String selectedModel,
     required EndpointConfig endpoint,
+    required List<EndpointConfig> endpoints,
+    required List<EndpointModel> endpointModels,
+    required String geminiApiKey,
     required String searchContext,
     required VoiceSettings voiceSettings,
     required GenerationSettings genSettings,
@@ -582,7 +588,26 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     String responseText = '';
     String accumulatedResponse = '';
 
-    List<Map<String, dynamic>> openaiTools = [];
+    List<Map<String, dynamic>> openaiTools = [
+      {
+        'type': 'function',
+        'function': {
+          'name': 'web_search',
+          'description':
+              'Search the web for real-time information, latest news, facts, and live updates.',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'query': {
+                'type': 'string',
+                'description': 'The search query to look up on the web',
+              },
+            },
+            'required': ['query'],
+          },
+        },
+      },
+    ];
     if (mcpService != null) {
       try {
         final mcpToolsList = await mcpService.getAllAvailableTools();
@@ -840,7 +865,56 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             },
           });
 
-          if (openaiTools.any((t) => t['function']['name'] == toolName)) {
+          if (toolName == 'web_search') {
+            String searchQuery = '';
+            try {
+              final argsMap = toolArgs.isEmpty ? <String, dynamic>{} : jsonDecode(toolArgs);
+              if (argsMap is Map && argsMap['query'] != null) {
+                searchQuery = stringValue(argsMap['query']);
+              }
+            } catch (_) {}
+            if (searchQuery.trim().isEmpty) {
+              searchQuery = prompt;
+            }
+
+            final logStart = '\n<think>\n**Antigravity Web Search:** `$searchQuery`\n';
+            accumulatedResponse += logStart;
+            onText(accumulatedResponse);
+
+            try {
+              final searchResults = await _performSearch(
+                searchQuery,
+                genSettings,
+                endpoints,
+                endpointModels,
+                geminiApiKey,
+                syncSettings,
+                (status) {
+                  accumulatedResponse += '• $status\n';
+                  onText(accumulatedResponse);
+                },
+              );
+
+              final logEnd = '\n```markdown\n$searchResults\n```\n</think>\n\n';
+              accumulatedResponse += logEnd;
+              onText(accumulatedResponse);
+
+              toolResults.add({
+                'role': 'tool',
+                'content': searchResults,
+                'tool_call_id': callId,
+              });
+            } catch (e) {
+              final logError = '\n<think>\n[Web Search Error: $e]\n</think>\n';
+              accumulatedResponse += logError;
+              onText(accumulatedResponse);
+              toolResults.add({
+                'role': 'tool',
+                'content': 'Error searching web: $e',
+                'tool_call_id': callId,
+              });
+            }
+          } else if (openaiTools.any((t) => t['function']['name'] == toolName)) {
             final logStart = '\n<think>\n**Executing MCP tool `$toolName`...**\n';
             accumulatedResponse += logStart;
             onText(accumulatedResponse);
@@ -1559,6 +1633,10 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
   ) async {
     if (settings.webSearchMode == 'off') return false;
     if (settings.webSearchMode == 'on') return true;
+    if (model.toLowerCase().contains('antigravity') ||
+        (endpoint != null && endpoint.name.toLowerCase().contains('antigravity'))) {
+      return true;
+    }
     final text = prompt.toLowerCase();
     const triggers = [
       'latest',
@@ -1608,6 +1686,97 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
   ) async {
     final engine = settings.webSearchEngine;
     onStatus('Searching the web...');
+    if (engine == 'antigravity') {
+      try {
+        final uri = Uri.https('html.duckduckgo.com', '/html/', {'q': query});
+        final response = await _globalClient.get(
+          uri,
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        ).timeout(const Duration(seconds: 10));
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final html = response.body;
+          final results = <Map<String, String>>[];
+          final linkRegex = RegExp(r'<a class="result__url" href="([^"]+)">(.*?)</a>');
+          final snippetRegex = RegExp(r'<a class="result__snippet[^"]*"[^>]*>(.*?)</a>');
+          final linkMatches = linkRegex.allMatches(html).toList();
+          final snippetMatches = snippetRegex.allMatches(html).toList();
+
+          for (int i = 0; i < linkMatches.length && results.length < 8; i++) {
+            var rawUrl = linkMatches[i].group(1) ?? '';
+            if (rawUrl.contains('uddg=')) {
+              final match = RegExp(r'uddg=([^&]+)').firstMatch(rawUrl);
+              if (match != null) {
+                rawUrl = Uri.decodeComponent(match.group(1)!);
+              }
+            }
+            var title = (linkMatches[i].group(2) ?? '').replaceAll(RegExp(r'<[^>]*>'), '').trim();
+            var snippet = i < snippetMatches.length
+                ? (snippetMatches[i].group(1) ?? '').replaceAll(RegExp(r'<[^>]*>'), '').trim()
+                : '';
+            if (rawUrl.isNotEmpty && title.isNotEmpty) {
+              results.add({
+                'title': title,
+                'url': rawUrl,
+                'snippet': snippet,
+              });
+            }
+          }
+
+          if (results.isNotEmpty) {
+            onStatus('Antigravity found ${results.length} live results.');
+            return _searchBlock(results);
+          }
+        }
+      } catch (_) {}
+
+      // Antigravity fallback to Lite
+      final response = await http.post(
+        Uri.parse('https://lite.duckduckgo.com/lite/'),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        body: 'q=${Uri.encodeQueryComponent(query)}',
+      );
+
+      final html = response.body;
+      final results = <Map<String, String>>[];
+      final linkRegex = RegExp(r"<a[^>]+href=\x22([^\x22]+)\x22[^>]*class='result-link'[^>]*>(.*?)</a>");
+      final snippetRegex = RegExp(r"<td class='result-snippet'>\s*(.*?)\s*</td>", dotAll: true);
+      final linkMatches = linkRegex.allMatches(html).toList();
+      final snippetMatches = snippetRegex.allMatches(html).toList();
+
+      for (int i = 0; i < linkMatches.length; i++) {
+        var url = linkMatches[i].group(1) ?? '';
+        if (url.startsWith('//')) {
+          url = 'https:$url';
+        } else if (url.startsWith('/')) {
+          url = 'https://lite.duckduckgo.com$url';
+        }
+        var title = linkMatches[i].group(2) ?? '';
+        title = title.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&#x27;', "'").replaceAll('&quot;', '"').replaceAll('&amp;', '&');
+        var snippet = i < snippetMatches.length ? snippetMatches[i].group(1) ?? '' : '';
+        snippet = snippet.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&#x27;', "'").replaceAll('&quot;', '"').replaceAll('&amp;', '&');
+        if (url.isNotEmpty && title.isNotEmpty && !url.contains('duckduckgo.com/lite/')) {
+          results.add({
+            'title': title.trim(),
+            'url': url,
+            'snippet': snippet.trim(),
+          });
+        }
+      }
+
+      if (results.isEmpty) {
+        throw Exception('Antigravity search returned no web results.');
+      }
+      onStatus('Antigravity found ${results.length} results.');
+      return _searchBlock(results.take(8).toList());
+    }
+
     if (engine == 'duckduckgo') {
       final response = await http.post(
         Uri.parse('https://lite.duckduckgo.com/lite/'),

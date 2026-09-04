@@ -4,6 +4,21 @@ All notable changes and enhancements to the AdoetzGPT Flutter project are docume
 
 ---
 
+## [2.2.0-enh] - 2026-09-04 12:00:00 UTC
+
+### 🌐 Antigravity Web Search Engine & Autonomous Tool Calling
+- **Antigravity Search Engine Provider (`lib/models.dart`, `lib/services/ai_service.dart`, `lib/screens/settings_screen.dart`)**:
+  - Integrated dedicated `antigravity` Web Search engine provider with HTML snippet parsing and Lite fallback.
+  - Automatic web search auto-triggering when active model or endpoint contains `antigravity`.
+  - Added user settings toggle chip for Antigravity Search in Settings screen.
+- **Autonomous `web_search` Tool Calling Loop (`lib/services/ai_service.dart`)**:
+  - Registered OpenAI standard function tool definition schema for `web_search` (`query: string`).
+  - Implemented streaming tool chunk reconstruction across `tool_calls` deltas.
+  - Added live intermediate search status reporting within `<think>...</think>` blocks.
+  - Feed search results back into model as `role: 'tool'` messages with seamless continuation.
+
+---
+
 ## [2.1.0-enh] - 2026-08-28 11:55:00 UTC
 
 ### 🔧 Post-Release Build Stabilization (2026-08-28 05:45:00 UTC)

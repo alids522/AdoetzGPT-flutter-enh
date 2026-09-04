@@ -2520,6 +2520,7 @@ class _WebSearchSection extends StatelessWidget {
             children:
                 [
                   'gemini',
+                  'antigravity',
                   'google-custom',
                   'duckduckgo',
                   'endpoint',
@@ -2535,7 +2536,7 @@ class _WebSearchSection extends StatelessWidget {
                         webSearchEngine: engine,
                         webSearchProvider: engine == 'endpoint'
                             ? 'endpoint'
-                            : 'gemini',
+                            : (engine == 'antigravity' ? 'antigravity' : 'gemini'),
                       ),
                     ),
                   );
@@ -2652,6 +2653,7 @@ class _WebSearchSection extends StatelessWidget {
 
   String _engineLabel(String value) {
     return switch (value) {
+      'antigravity' => 'Antigravity Search',
       'google-custom' => 'Google Custom',
       'duckduckgo' => 'DuckDuckGo',
       'endpoint' => 'Endpoint',

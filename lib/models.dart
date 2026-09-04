@@ -1144,7 +1144,9 @@ class GenerationSettings {
       webSearchEngine: nextEngine,
       webSearchProvider:
           webSearchProvider ??
-          (nextEngine == 'endpoint' ? 'endpoint' : 'gemini'),
+          (nextEngine == 'endpoint'
+              ? 'endpoint'
+              : (nextEngine == 'antigravity' ? 'antigravity' : 'gemini')),
       webSearchModel: webSearchModel ?? this.webSearchModel,
       webSearchEndpointId: webSearchEndpointId ?? this.webSearchEndpointId,
       googleSearchApiKey: googleSearchApiKey ?? this.googleSearchApiKey,
@@ -1179,7 +1181,9 @@ class GenerationSettings {
           : true,
       webSearchMode: stringValue(json['webSearchMode'], 'auto'),
       webSearchEngine: engine,
-      webSearchProvider: engine == 'endpoint' ? 'endpoint' : 'gemini',
+      webSearchProvider: engine == 'endpoint'
+          ? 'endpoint'
+          : (engine == 'antigravity' ? 'antigravity' : 'gemini'),
       webSearchModel: stringValue(
         json['webSearchModel'],
         'gemini-flash-lite-latest',
