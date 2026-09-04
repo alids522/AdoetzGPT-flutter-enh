@@ -471,6 +471,20 @@ app.put('/api/sync/backup', async (req, res) => {
     res.status(400).json({ error: error.message || 'Unable to save backup state.' });
   }
 });
+
+// Serve compiled Flutter Web assets if build/web directory exists
+const webBuildDir = path.join(root, 'build', 'web');
+app.use(express.static(webBuildDir));
+app.get('*', async (_req, res, next) => {
+  try {
+    const indexPath = path.join(webBuildDir, 'index.html');
+    await fs.access(indexPath);
+    res.sendFile(indexPath);
+  } catch (_) {
+    next();
+  }
+});
+
 app.listen(port, host, () => {
   console.log(`Adoetz Chat running at http://${host}:${port}`);
   console.log(`Shared state database: ${dbPath}`);
