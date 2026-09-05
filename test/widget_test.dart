@@ -41,4 +41,43 @@ void main() {
     expect(pSolar.isSolarFlare, isTrue);
     expect(pSolar.primary, equals(const Color(0xffff5e00)));
   });
+
+  test('Voice personas list count and default', () {
+    const expectedVoices = [
+      'Zephyr',
+      'Puck',
+      'Charon',
+      'Kore',
+      'Fenrir',
+      'Leda',
+      'Orus',
+      'Aoede',
+      'Callirrhoe',
+      'Autonoe',
+      'Enceladus',
+      'Iapetus',
+      'Umbriel',
+      'Algieba',
+      'Despina',
+      'Erinome',
+      'Algenib',
+      'Rasalgethi',
+      'Laomedeia',
+      'Achernar',
+      'Alnilam',
+      'Schedar',
+      'Gacrux',
+      'Pulcherrima',
+      'Achird',
+      'Zubenelgenubi',
+      'Vindemiatrix',
+      'Sadachbia',
+      'Sadaltager',
+      'Sulafat',
+    ];
+    expect(expectedVoices.length, equals(30));
+    expect(expectedVoices.contains('Zephyr'), isTrue);
+    expect(expectedVoices.contains('Sulafat'), isTrue);
+    expect(expectedVoices.contains('Sadaltager'), isTrue);
+  });
 }

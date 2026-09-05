@@ -144,8 +144,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       items.add(const SizedBox(height: 18));
     }
 
-    if ('voice live speech audio persona sound video camera puck fenrir charon aoede kore'.contains(query) ||
-        'suara kamera mikrofon'.contains(query)) {
+    if ('voice live speech audio persona sound video camera zephyr puck charon kore fenrir leda orus aoede callirrhoe autonoe enceladus iapetus umbriel algieba despina erinome algenib rasalgethi laomedeia achernar alnilam schedar gacrux pulcherrima achird zubenelgenubi vindemiatrix sadachbia sadaltager sulafat'.contains(query) ||
+        'suara kamera mikrofon persona live model'.contains(query)) {
       items.add(_VoiceSection(copy: copy));
       items.add(const SizedBox(height: 18));
     }
@@ -3033,7 +3033,38 @@ class _VoiceSection extends StatelessWidget {
 
   final UiCopy copy;
 
-  static const voices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
+  static const voices = [
+    'Zephyr',
+    'Puck',
+    'Charon',
+    'Kore',
+    'Fenrir',
+    'Leda',
+    'Orus',
+    'Aoede',
+    'Callirrhoe',
+    'Autonoe',
+    'Enceladus',
+    'Iapetus',
+    'Umbriel',
+    'Algieba',
+    'Despina',
+    'Erinome',
+    'Algenib',
+    'Rasalgethi',
+    'Laomedeia',
+    'Achernar',
+    'Alnilam',
+    'Schedar',
+    'Gacrux',
+    'Pulcherrima',
+    'Achird',
+    'Zubenelgenubi',
+    'Vindemiatrix',
+    'Sadachbia',
+    'Sadaltager',
+    'Sulafat',
+  ];
   static const personalities = [
     'Assistant',
     'Therapist',
