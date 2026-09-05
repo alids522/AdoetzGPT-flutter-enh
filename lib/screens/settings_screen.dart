@@ -1144,6 +1144,27 @@ class _ThemeOptionTileState extends State<_ThemeOptionTile> {
           const Color(0xfff59e0b),
           const Color(0xffa855f7),
         ],
+      'synthwave-80s' => [
+          const Color(0xff090214), // Deep violet void
+          const Color(0xff160a2b), // Outrun purple surface
+          const Color(0xffff2a85), // Laser magenta
+          const Color(0xff00e5ff), // Neon cyan
+          const Color(0xffb026ff), // Glow purple
+        ],
+      'matrix-phosphor' => [
+          const Color(0xff020a04), // Phosphor terminal black
+          const Color(0xff061c0c), // CRT deep green
+          const Color(0xff00ff66), // Radioactive phosphor green
+          const Color(0xffa3e635), // Lime accent
+          const Color(0xff22c55e), // Emerald bloom
+        ],
+      'solar-flare' => [
+          const Color(0xff0e0402), // Dark molten ember
+          const Color(0xff1f0904), // Magma obsidian
+          const Color(0xffff5e00), // Plasma fire orange
+          const Color(0xffffc400), // Solar gold
+          const Color(0xffff3300), // Corona crimson
+        ],
       _ => [
           const Color(0xff000000),
           const Color(0xff1a1a1a),

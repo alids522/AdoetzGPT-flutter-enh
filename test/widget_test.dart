@@ -19,15 +19,26 @@ void main() {
     expect(find.byType(MaterialApp), findsOneWidget);
   });
 
-  test('Cyberpunk OLED theme token validation', () {
-    final theme = appVisualThemeFromKey('cyberpunk-oled');
-    expect(theme, equals(AppVisualTheme.cyberpunkOled));
+  test('New dynamic visual themes token validation', () {
+    // Synthwave 80s
+    final synthwave = appVisualThemeFromKey('synthwave-80s');
+    expect(synthwave, equals(AppVisualTheme.synthwave80s));
+    final pSynth = AppPalette.fromBrightness(true, visualTheme: synthwave);
+    expect(pSynth.isSynthwave80s, isTrue);
+    expect(pSynth.primary, equals(const Color(0xffff2a85)));
 
-    final palette = AppPalette.fromBrightness(true, visualTheme: theme);
-    expect(palette.isCyberpunkOled, isTrue);
-    expect(palette.background, equals(const Color(0xff000000)));
-    expect(palette.primary, equals(const Color(0xffff0055)));
-    expect(palette.secondary, equals(const Color(0xfffcee0a)));
-    expect(palette.glow, equals(const Color(0xff00f0ff)));
+    // Matrix Phosphor
+    final matrix = appVisualThemeFromKey('matrix-phosphor');
+    expect(matrix, equals(AppVisualTheme.matrixPhosphor));
+    final pMatrix = AppPalette.fromBrightness(true, visualTheme: matrix);
+    expect(pMatrix.isMatrixPhosphor, isTrue);
+    expect(pMatrix.primary, equals(const Color(0xff00ff66)));
+
+    // Solar Flare
+    final solar = appVisualThemeFromKey('solar-flare');
+    expect(solar, equals(AppVisualTheme.solarFlare));
+    final pSolar = AppPalette.fromBrightness(true, visualTheme: solar);
+    expect(pSolar.isSolarFlare, isTrue);
+    expect(pSolar.primary, equals(const Color(0xffff5e00)));
   });
 }

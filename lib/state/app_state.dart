@@ -1110,6 +1110,18 @@ class AdoetzAppState extends ChangeNotifier {
       'cyberpunk' ||
       'cyberpunkoled' ||
       'oled' => 'cyberpunk-oled',
+      'synthwave-80s' ||
+      'synthwave' ||
+      'synthwave80s' ||
+      'outrun' => 'synthwave-80s',
+      'matrix-phosphor' ||
+      'matrix' ||
+      'phosphor' ||
+      'matrixphosphor' => 'matrix-phosphor',
+      'solar-flare' ||
+      'solarflare' ||
+      'solar' ||
+      'flare' => 'solar-flare',
       _ => 'default',
     };
     if (visualTheme == normalized) return;

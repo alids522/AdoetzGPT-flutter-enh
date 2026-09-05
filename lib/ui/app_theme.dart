@@ -4,7 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-enum AppVisualTheme { classic, liquidGlass, auroraNeon, modernMinimal, ios26, midnightBloom, cyberpunkOled }
+enum AppVisualTheme {
+  classic,
+  liquidGlass,
+  auroraNeon,
+  modernMinimal,
+  ios26,
+  midnightBloom,
+  cyberpunkOled,
+  synthwave80s,
+  matrixPhosphor,
+  solarFlare,
+}
 
 class AppVisualThemeOption {
   const AppVisualThemeOption({
@@ -63,6 +74,24 @@ const appVisualThemeOptions = [
     description: 'Pitch black OLED contrast with electric neon magenta and cyber amber glow.',
     icon: LucideIcons.zap,
   ),
+  AppVisualThemeOption(
+    key: 'synthwave-80s',
+    label: 'Synthwave 80s',
+    description: 'Retro outrun grid with laser hot pink, cosmic violet, and neon cyan radiance.',
+    icon: LucideIcons.disc,
+  ),
+  AppVisualThemeOption(
+    key: 'matrix-phosphor',
+    label: 'Matrix Phosphor',
+    description: 'Dark terminal void with radioactive phosphor green and emerald glow.',
+    icon: LucideIcons.terminal,
+  ),
+  AppVisualThemeOption(
+    key: 'solar-flare',
+    label: 'Solar Flare',
+    description: 'Molten sun ember with blazing magma orange, gold, and crimson plasma.',
+    icon: LucideIcons.flame,
+  ),
 ];
 
 AppVisualTheme appVisualThemeFromKey(String value) {
@@ -84,6 +113,18 @@ AppVisualTheme appVisualThemeFromKey(String value) {
     'cyberpunk' ||
     'cyberpunkoled' ||
     'oled' => AppVisualTheme.cyberpunkOled,
+    'synthwave-80s' ||
+    'synthwave' ||
+    'synthwave80s' ||
+    'outrun' => AppVisualTheme.synthwave80s,
+    'matrix-phosphor' ||
+    'matrix' ||
+    'phosphor' ||
+    'matrixphosphor' => AppVisualTheme.matrixPhosphor,
+    'solar-flare' ||
+    'solarflare' ||
+    'solar' ||
+    'flare' => AppVisualTheme.solarFlare,
     _ => AppVisualTheme.classic,
   };
 }
@@ -97,6 +138,9 @@ String appVisualThemeKey(AppVisualTheme theme) {
     AppVisualTheme.ios26 => 'ios26',
     AppVisualTheme.midnightBloom => 'midnight-bloom',
     AppVisualTheme.cyberpunkOled => 'cyberpunk-oled',
+    AppVisualTheme.synthwave80s => 'synthwave-80s',
+    AppVisualTheme.matrixPhosphor => 'matrix-phosphor',
+    AppVisualTheme.solarFlare => 'solar-flare',
   };
 }
 
@@ -158,6 +202,9 @@ class AppPalette {
   bool get isIos26 => visualTheme == AppVisualTheme.ios26;
   bool get isMidnightBloom => visualTheme == AppVisualTheme.midnightBloom;
   bool get isCyberpunkOled => visualTheme == AppVisualTheme.cyberpunkOled;
+  bool get isSynthwave80s => visualTheme == AppVisualTheme.synthwave80s;
+  bool get isMatrixPhosphor => visualTheme == AppVisualTheme.matrixPhosphor;
+  bool get isSolarFlare => visualTheme == AppVisualTheme.solarFlare;
 
   factory AppPalette.fromBrightness(bool dark, {AppVisualTheme? visualTheme}) {
     final theme = visualTheme ?? _ThemeRuntime.visualTheme;
@@ -348,6 +395,111 @@ class AppPalette {
         controlRadius: 14,
         sidebarRadius: 22,
         glassBlur: 12,
+        motionScale: 1.15,
+      );
+    }
+    if (theme == AppVisualTheme.synthwave80s) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff090214) : const Color(0xfff7edf9),
+        surface: dark
+            ? const Color(0xd9160a2b)
+            : Colors.white.withValues(alpha: 0.76),
+        surfaceDim: dark
+            ? const Color(0xa6100521)
+            : const Color(0x99ebd7f2),
+        surfaceBright: dark
+            ? const Color(0xff22103d)
+            : const Color(0xffffffff),
+        primary: const Color(0xffff2a85), // Outrun laser magenta
+        secondary: const Color(0xff00e5ff), // Neon cyan
+        onSurface: dark ? const Color(0xfffdf4ff) : const Color(0xff1f082e),
+        onSurfaceVariant: dark
+            ? const Color(0xffc084fc)
+            : const Color(0xff701a75),
+        outline: dark
+            ? const Color(0xffff2a85).withValues(alpha: 0.32)
+            : const Color(0xffff2a85).withValues(alpha: 0.22),
+        error: const Color(0xffff0055),
+        highlight: const Color(0xffff2a85).withValues(alpha: 0.28),
+        glow: const Color(0xffb026ff), // Electric purple glow
+        shadow: const Color(0xff090214).withValues(alpha: dark ? 0.90 : 0.25),
+        panelRadius: 28,
+        cardRadius: 20,
+        controlRadius: 18,
+        sidebarRadius: 30,
+        glassBlur: 20,
+        motionScale: 1.2,
+      );
+    }
+    if (theme == AppVisualTheme.matrixPhosphor) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff020a04) : const Color(0xffedfbf0),
+        surface: dark
+            ? const Color(0xcc061c0c)
+            : Colors.white.withValues(alpha: 0.82),
+        surfaceDim: dark
+            ? const Color(0x99041208)
+            : const Color(0x88dbf8e1),
+        surfaceBright: dark
+            ? const Color(0xff0b2e15)
+            : const Color(0xffffffff),
+        primary: const Color(0xff00ff66), // Radioactive phosphor green
+        secondary: const Color(0xffa3e635), // Lime accent
+        onSurface: dark ? const Color(0xfff0fdf4) : const Color(0xff052e16),
+        onSurfaceVariant: dark
+            ? const Color(0xff86efac)
+            : const Color(0xff166534),
+        outline: dark
+            ? const Color(0xff00ff66).withValues(alpha: 0.26)
+            : const Color(0xff16a34a).withValues(alpha: 0.22),
+        error: const Color(0xffef4444),
+        highlight: const Color(0xff00ff66).withValues(alpha: 0.24),
+        glow: const Color(0xff00ff66), // Phosphor bloom
+        shadow: Colors.black.withValues(alpha: dark ? 0.85 : 0.18),
+        panelRadius: 18,
+        cardRadius: 14,
+        controlRadius: 12,
+        sidebarRadius: 22,
+        glassBlur: 14,
+        motionScale: 1.0,
+      );
+    }
+    if (theme == AppVisualTheme.solarFlare) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff0e0402) : const Color(0xfffff7ed),
+        surface: dark
+            ? const Color(0xd91f0904)
+            : Colors.white.withValues(alpha: 0.80),
+        surfaceDim: dark
+            ? const Color(0xa6170602)
+            : const Color(0x88fed7aa),
+        surfaceBright: dark
+            ? const Color(0xff2d0e06)
+            : const Color(0xffffffff),
+        primary: const Color(0xffff5e00), // Magma fire orange
+        secondary: const Color(0xffffc400), // Solar gold
+        onSurface: dark ? const Color(0xfffff7ed) : const Color(0xff431407),
+        onSurfaceVariant: dark
+            ? const Color(0xfffdba74)
+            : const Color(0xff9a3412),
+        outline: dark
+            ? const Color(0xffff5e00).withValues(alpha: 0.30)
+            : const Color(0xffea580c).withValues(alpha: 0.22),
+        error: const Color(0xffff2200),
+        highlight: const Color(0xffffa200).withValues(alpha: 0.32),
+        glow: const Color(0xffff3300), // Radiant solar corona
+        shadow: const Color(0xff0e0402).withValues(alpha: dark ? 0.90 : 0.22),
+        panelRadius: 26,
+        cardRadius: 18,
+        controlRadius: 16,
+        sidebarRadius: 28,
+        glassBlur: 18,
         motionScale: 1.15,
       );
     }
@@ -799,7 +951,14 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
     final reducedMotion =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final shouldAnimate =
-        (p.isAurora || p.isLiquidGlass || p.isIos26 || p.isMidnightBloom || p.isCyberpunkOled) &&
+        (p.isAurora ||
+            p.isLiquidGlass ||
+            p.isIos26 ||
+            p.isMidnightBloom ||
+            p.isCyberpunkOled ||
+            p.isSynthwave80s ||
+            p.isMatrixPhosphor ||
+            p.isSolarFlare) &&
         !reducedMotion;
     if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
@@ -821,7 +980,44 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
         return DecoratedBox(
           decoration: BoxDecoration(
             color: p.background,
-            gradient: p.isCyberpunkOled
+            gradient: p.isSynthwave80s
+                ? LinearGradient(
+                    begin: alignmentA,
+                    end: alignmentB,
+                    colors: [
+                      p.background,
+                      const Color(0xffff2a85).withValues(alpha: 0.16),
+                      const Color(0xffb026ff).withValues(alpha: 0.18),
+                      const Color(0xff00e5ff).withValues(alpha: 0.12),
+                      p.background,
+                    ],
+                    stops: const [0, 0.28, 0.55, 0.82, 1],
+                  )
+                : p.isMatrixPhosphor
+                ? RadialGradient(
+                    center: alignmentA,
+                    radius: 1.25,
+                    colors: [
+                      const Color(0xff00ff66).withValues(alpha: 0.15),
+                      const Color(0xff062b10).withValues(alpha: 0.20),
+                      p.background,
+                    ],
+                    stops: const [0, 0.45, 1],
+                  )
+                : p.isSolarFlare
+                ? LinearGradient(
+                    begin: alignmentA,
+                    end: alignmentB,
+                    colors: [
+                      p.background,
+                      const Color(0xffff3300).withValues(alpha: 0.18),
+                      const Color(0xffff5e00).withValues(alpha: 0.22),
+                      const Color(0xffffc400).withValues(alpha: 0.12),
+                      p.background,
+                    ],
+                    stops: const [0, 0.25, 0.55, 0.80, 1],
+                  )
+                : p.isCyberpunkOled
                 ? RadialGradient(
                     center: alignmentA,
                     radius: 1.15,
