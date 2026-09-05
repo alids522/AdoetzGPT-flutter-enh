@@ -1,63 +1,86 @@
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models.dart';
+import 'storage_io.dart';
 
 class StorageService {
   static const appStateKey = 'adoetzgpt.appState';
+  static const authUserKey = 'adoetzgpt.auth_user';
+  static const authTokenKey = 'adoetzgpt.auth_token';
 
   Future<PersistedAppState?> load() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File(path.join(directory.path, 'adoetzgpt_state.json'));
-      final tempFile = File(path.join(directory.path, 'adoetzgpt_state.json.tmp'));
-
-      String raw = '';
-      if (await file.exists()) {
-        try {
-          raw = await file.readAsString();
-        } catch (_) {}
+      final raw = await readIoState(appStateKey);
+      if (raw != null && raw.trim().isNotEmpty) {
+        var parsed = PersistedAppState.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw)),
+        );
+        if (parsed.currentUser == null) {
+          final authMap = await readIoAuth(authUserKey, authTokenKey);
+          if (authMap != null && authMap['user'] != null && authMap['user']!.isNotEmpty) {
+            final user = UserAccount.fromJson(Map<String, dynamic>.from(jsonDecode(authMap['user']!)));
+            parsed = parsed.copyWith(
+              currentUser: user,
+              authToken: authMap['token'] ?? parsed.authToken,
+              userName: user.label,
+            );
+          }
+        }
+        return parsed;
       }
-      if (raw.isEmpty && await tempFile.exists()) {
-        try {
-          raw = await tempFile.readAsString();
-        } catch (_) {}
-      }
-      if (raw.isEmpty) {
-        // Fallback to SharedPreferences for migration
-        final prefs = await SharedPreferences.getInstance();
-        raw = prefs.getString(appStateKey) ?? prefs.getString('appState') ?? '';
-      }
-
-      if (raw.isEmpty) return null;
-      return PersistedAppState.fromJson(
-        Map<String, dynamic>.from(jsonDecode(raw)),
-      );
-    } catch (_) {
-      return null;
+    } catch (e) {
+      debugPrint('StorageService.load error: $e');
     }
+
+    // Attempt dedicated auth recovery if root state was missing or failed to decode
+    try {
+      final authMap = await readIoAuth(authUserKey, authTokenKey);
+      if (authMap != null && authMap['user'] != null && authMap['user']!.isNotEmpty) {
+        final user = UserAccount.fromJson(Map<String, dynamic>.from(jsonDecode(authMap['user']!)));
+        final savedToken = authMap['token'] ?? '';
+        final defaults = PersistedAppState.defaults();
+        return defaults.copyWith(
+          currentUser: user,
+          authToken: savedToken,
+          userName: user.label,
+        );
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   Future<void> save(PersistedAppState state) async {
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File(path.join(directory.path, 'adoetzgpt_state.json'));
-    final tempFile = File(path.join(directory.path, 'adoetzgpt_state.json.tmp'));
-    final encoded = _compactForStorage(state).encode();
-    await tempFile.writeAsString(encoded, flush: true);
-    if (await file.exists()) {
-      await file.delete();
+    try {
+      final encoded = _compactForStorage(state).encode();
+      await writeIoState(appStateKey, encoded);
+
+      // Save dedicated auth keys for quick recovery (works for both authenticated users and guests)
+      if (state.currentUser != null) {
+        await writeIoAuth(
+          authUserKey,
+          jsonEncode(state.currentUser!.toJson()),
+          authTokenKey,
+          state.authToken,
+        );
+      } else {
+        await clearIoAuth(authUserKey, authTokenKey);
+      }
+    } catch (e) {
+      debugPrint('StorageService.save error: $e');
     }
-    await tempFile.rename(file.path);
   }
 
   Future<void> clearAuth() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('currentUser');
-    await prefs.remove('authToken');
+    try {
+      await clearIoAuth(authUserKey, authTokenKey);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('currentUser');
+      await prefs.remove('authToken');
+    } catch (_) {}
   }
 
   PersistedAppState _compactForStorage(PersistedAppState state) {
@@ -67,7 +90,7 @@ class StorageService {
           return AttachmentData(
             name: attachment.name,
             type: attachment.type,
-            data: attachment.data.length <= 500000 ? attachment.data : '',
+            data: attachment.data.length <= 4000000 ? attachment.data : '',
             url: null,
           );
         }).toList();
@@ -105,6 +128,8 @@ class StorageService {
           : state.tokenUsageData,
       customCounters: state.customCounters,
       mcpServers: state.mcpServers,
+      cronJobs: state.cronJobs,
+      personas: state.personas,
       soundEffectsEnabled: state.soundEffectsEnabled,
       isLiveVideoEnabled: state.isLiveVideoEnabled,
       isLiveFrontCamera: state.isLiveFrontCamera,

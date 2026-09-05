@@ -2591,6 +2591,54 @@ class _WebSearchSection extends StatelessWidget {
               'Create an agent with "Web Search" enabled at console.mistral.ai',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
+          ] else if (settings.webSearchEngine == 'antigravity') ...[
+            _DropdownSetting(
+              label: 'Antigravity / 9router Endpoint',
+              value: settings.antigravityEndpointId,
+              values: ['', ...app.endpoints.where((e) => e.enabled).map((item) => item.id)],
+              labels: {
+                for (final ep in app.endpoints.where((e) => e.enabled)) ep.id: ep.name,
+                '': 'Select endpoint (e.g. 9router / custom)',
+              },
+              onChanged: (value) {
+                final firstModel = app.endpointModels
+                    .where((item) => item.endpointId == value)
+                    .firstOrNull;
+                app.updateGenerationSettings(
+                  settings.copyWith(
+                    antigravityEndpointId: value,
+                    antigravityModel: firstModel?.name ?? '',
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            _DropdownSetting(
+              label: 'Antigravity Search Model',
+              value: settings.antigravityModel,
+              values: [
+                '',
+                ...{
+                  ...app.endpointModels
+                      .where(
+                        (item) =>
+                            settings.antigravityEndpointId.isEmpty ||
+                            item.endpointId == settings.antigravityEndpointId,
+                      )
+                      .map((item) => item.name),
+                  ...app.geminiModels,
+                },
+              ],
+              labels: const {'': 'Auto / 9router Antigravity default'},
+              onChanged: (value) => app.updateGenerationSettings(
+                settings.copyWith(antigravityModel: value),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Performs live Google Search grounding directly via your Antigravity / 9router endpoint using the native Google Search tools adapter.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
           ] else if (settings.webSearchEngine == 'endpoint') ...[
             _DropdownSetting(
               label: 'Endpoint',

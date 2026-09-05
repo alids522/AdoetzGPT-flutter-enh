@@ -1912,6 +1912,84 @@ class AdoetzAppState extends ChangeNotifier {
       if (request.configurationError != null) {
         throw Exception(request.configurationError);
       }
+
+      // Check for image generation intent (prompt matches or image attachment edit/followup requested)
+      final hasImageAttachment = attachments.any((a) => a.type.startsWith('image/'));
+      final lastBotImage = session.messages.reversed
+          .where((m) => !m.isUser && m.attachments.any((a) => a.type.startsWith('image/')))
+          .map((m) => m.attachments.firstWhere((a) => a.type.startsWith('image/')))
+          .firstOrNull;
+
+      final isImageIntent = _ai.isImageGenerationPrompt(prompt.trim()) ||
+          (prompt.trim().toLowerCase().startsWith('/image') || prompt.trim().toLowerCase().startsWith('/draw')) ||
+          ((hasImageAttachment || lastBotImage != null) &&
+           (prompt.trim().toLowerCase().contains('edit') ||
+            prompt.trim().toLowerCase().contains('ubah') ||
+            prompt.trim().toLowerCase().contains('ganti') ||
+            prompt.trim().toLowerCase().contains('jadikan') ||
+            prompt.trim().toLowerCase().contains('tambahkan') ||
+            prompt.trim().toLowerCase().contains('tambahin') ||
+            prompt.trim().toLowerCase().contains('kasih') ||
+            prompt.trim().toLowerCase().contains('hilangkan') ||
+            prompt.trim().toLowerCase().contains('hapus') ||
+            prompt.trim().toLowerCase().contains('warnai') ||
+            prompt.trim().toLowerCase().contains('modify')));
+
+      if (isImageIntent) {
+        var cleanPrompt = prompt.trim();
+        if (cleanPrompt.toLowerCase().startsWith('/image') || cleanPrompt.toLowerCase().startsWith('/draw')) {
+          cleanPrompt = cleanPrompt.replaceFirst(RegExp(r'^/(image|draw)\s*', caseSensitive: false), '').trim();
+        }
+        if (cleanPrompt.isEmpty) {
+          cleanPrompt = 'A creative high-quality illustration';
+        }
+
+        final inputBase64 = hasImageAttachment
+            ? attachments.firstWhere((a) => a.type.startsWith('image/')).data
+            : (lastBotImage?.data);
+
+        _queueStreamText(
+          generationId,
+          session.id,
+          botId,
+          inputBase64 != null
+              ? 'Mengedit gambar menggunakan Antigravity (ag/gemini-3.1-flash-image)...'
+              : 'Membuat gambar menggunakan Antigravity (ag/gemini-3.1-flash-image)...',
+        );
+
+        final generatedImage = await _ai.generateImage(
+          prompt: cleanPrompt,
+          inputImageBase64: inputBase64,
+          endpoints: request.endpoints,
+          settings: genSettings,
+          syncSettings: syncSettings,
+          onStatus: (status) {
+            _queueStreamText(generationId, session.id, botId, status);
+          },
+        );
+
+        if (_sessionGenerationIds[session.id] != generationId || _stopRequestedGenerations.contains(generationId)) {
+          return;
+        }
+
+        final completionNote = inputBase64 != null
+            ? 'Berikut adalah hasil edit gambar sesuai permintaan Anda:\n\n*"$cleanPrompt"*'
+            : 'Berikut gambar yang dibuatkan untuk Anda:\n\n*"$cleanPrompt"*';
+
+        _queueStreamText(generationId, session.id, botId, completionNote);
+        _flushStreamText(generationId, session.id, botId, force: true);
+        _updateBotMessage(
+          session.id,
+          botId,
+          completionNote,
+          tokenCount: 1024,
+          isEstimatedTokenCount: true,
+          generationTimeMs: DateTime.now().difference(now).inMilliseconds,
+          attachments: [generatedImage],
+        );
+        return;
+      }
+
       final response = await _ai.sendMessage(
         prompt: requestPrompt,
         attachments: attachments,
@@ -1953,6 +2031,7 @@ class AdoetzAppState extends ChangeNotifier {
         tokenCount: response.outputTokens,
         isEstimatedTokenCount: response.isEstimated,
         generationTimeMs: response.generationTimeMs,
+        attachments: response.generatedAttachments.isNotEmpty ? response.generatedAttachments : null,
       );
       tokenUsageData = [
         ...tokenUsageData,
@@ -2884,7 +2963,7 @@ class AdoetzAppState extends ChangeNotifier {
         );
         executionSteps.add(step);
         onStepCompleted?.call(step);
-        currentContext = '${currentContext}\n\n[Step: ${agent.name} (${agent.role.name})]:\n${response.text}';
+        currentContext = '$currentContext\n\n[Step: ${agent.name} (${agent.role.name})]:\n${response.text}';
       } catch (err) {
         final duration = DateTime.now().difference(stepStart).inMilliseconds;
         final step = SwarmExecutionStep(
@@ -3036,7 +3115,6 @@ class AdoetzAppState extends ChangeNotifier {
 
     if (transcript.isEmpty) return;
     final session = currentSession;
-    if (session == null) return;
 
     final msg = Message(
       id: _newId('swarm'),
@@ -3250,6 +3328,7 @@ class AdoetzAppState extends ChangeNotifier {
     int? tokenCount,
     bool? isEstimatedTokenCount,
     int? generationTimeMs,
+    List<AttachmentData>? attachments,
   }) {
     final session = sessions.where((item) => item.id == sessionId).firstOrNull;
     if (session == null) return;
@@ -3264,6 +3343,7 @@ class AdoetzAppState extends ChangeNotifier {
               tokenCount: tokenCount,
               isEstimatedTokenCount: isEstimatedTokenCount,
               generationTimeMs: generationTimeMs,
+              attachments: attachments ?? message.attachments,
             );
           },
         )
@@ -3285,6 +3365,7 @@ class AdoetzAppState extends ChangeNotifier {
           modelOrAgentId: target.modelId,
           isEstimatedTokenCount: isEstimatedTokenCount ?? true,
           generationTimeMs: generationTimeMs,
+          attachments: attachments ?? const [],
         ),
       );
     }
@@ -4043,6 +4124,7 @@ class AdoetzAppState extends ChangeNotifier {
     final live = _liveService;
     if (live != null) unawaited(live.dispose());
     _cancelStreamFlush(resetText: true);
+    _cronTimer?.cancel();
     _ai.dispose();
     unawaited(LiveForegroundService.stop());
     unawaited(_sync.unsubscribeRemoteChanges());

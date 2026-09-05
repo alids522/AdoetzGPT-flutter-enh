@@ -21,6 +21,7 @@ class GeneratedResponse {
     this.cacheCreationInputTokens = 0,
     this.isEstimated = true,
     this.generationTimeMs,
+    this.generatedAttachments = const [],
   });
 
   final String text;
@@ -31,6 +32,7 @@ class GeneratedResponse {
   final int cacheCreationInputTokens;
   final bool isEstimated;
   final int? generationTimeMs;
+  final List<AttachmentData> generatedAttachments;
 }
 
 class ModelCatalog {
@@ -242,6 +244,12 @@ class AiService {
     if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
       headers['Authorization'] = 'Bearer ${endpoint.key}';
     }
+    final isReasoning = endpoint.models.isNotEmpty &&
+        (endpoint.models.first.toLowerCase().startsWith('o1') ||
+         endpoint.models.first.toLowerCase().startsWith('o3') ||
+         endpoint.models.first.toLowerCase().startsWith('gpt-5') ||
+         endpoint.models.first.toLowerCase().contains('reasoning'));
+    final tokenKey = isReasoning ? 'max_completion_tokens' : 'max_tokens';
     final payload = {
       'model': endpoint.models.isNotEmpty
           ? endpoint.models.first
@@ -249,7 +257,7 @@ class AiService {
       'messages': [
         {'role': 'user', 'content': 'ping'},
       ],
-      'max_tokens': 1,
+      tokenKey: 1,
     };
     final request =
         http.Request(
@@ -627,6 +635,11 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     }
 
     while (true) {
+      final isReasoningModel = selectedModel.toLowerCase().startsWith('o1') ||
+          selectedModel.toLowerCase().startsWith('o3') ||
+          selectedModel.toLowerCase().startsWith('gpt-5') ||
+          selectedModel.toLowerCase().contains('reasoning');
+      final tokenKey = isReasoningModel ? 'max_completion_tokens' : 'max_tokens';
       final payload = <String, dynamic>{
         'model': selectedModel,
         'messages': currentMessages,
@@ -634,7 +647,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         'stream_options': {'include_usage': true},
         'temperature': genSettings.temperature,
         'top_p': genSettings.topP,
-        'max_tokens': genSettings.maxOutputTokens,
+        tokenKey: genSettings.maxOutputTokens,
         if (openaiTools.isNotEmpty) 'tools': openaiTools,
         if (!thinkingMode &&
             selectedModel.toLowerCase().contains('deepseek')) ...{
@@ -810,6 +823,23 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             if (content != null) {
               buffer.write(stringValue(content));
             }
+            final tools = choice?['message']?['tool_calls'] ?? choice?['tool_calls'];
+            if (tools is List && tools.isNotEmpty) {
+              for (var t = 0; t < tools.length; t++) {
+                final toolChunk = tools[t];
+                if (toolChunk is! Map) continue;
+                final idx = toolChunk['index'] is int ? toolChunk['index'] as int : t;
+                final func = toolChunk['function'];
+                final funcArgs = func is Map ? stringValue(func['arguments']) : '';
+                final funcName = func is Map ? stringValue(func['name']) : '';
+                final argsBuf = StringBuffer()..write(funcArgs);
+                capturedToolCalls[idx] = {
+                  'id': stringValue(toolChunk['id']),
+                  'name': funcName,
+                  'arguments': argsBuf,
+                };
+              }
+            }
           }
         } catch (_) {}
       }
@@ -952,13 +982,14 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
               if (endpoint.key.trim().isNotEmpty && endpoint.key != 'sk-...') {
                 headers['Authorization'] = 'Bearer ${endpoint.key}';
               }
-              final res = await http.post(
+              final res = await _postWithProxyFallback(
                 Uri.parse('$baseUrl/tools/invoke'),
-                headers: headers,
-                body: jsonEncode({
+                headers,
+                {
                   'tool': toolName,
                   'args': argsMap,
-                }),
+                },
+                syncSettings,
               );
               final resultData = jsonDecode(res.body);
               final toolOutput = resultData['ok'] == true ? resultData['result'] : resultData['error'];
@@ -1000,6 +1031,11 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             'tool_calls': assistantToolCalls,
           });
           currentMessages.addAll(toolResults);
+          // Synthesis guard: instruct the model to synthesize the final answer and cite sources rather than looping tool calls
+          currentMessages.add({
+            'role': 'user',
+            'content': 'Gunakan hasil tool di atas dan jawab final sekarang dengan menyertakan tautan sumber/citation dalam format markdown. Jangan melakukan tool call tambahan.',
+          });
           continue;
         }
       } else {
@@ -1183,6 +1219,11 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     required SyncSettings syncSettings,
     void Function(int input, int output)? onUsage,
   }) async {
+    final isReasoning = selectedModel.toLowerCase().startsWith('o1') ||
+        selectedModel.toLowerCase().startsWith('o3') ||
+        selectedModel.toLowerCase().startsWith('gpt-5') ||
+        selectedModel.toLowerCase().contains('reasoning');
+    final tokenKey = isReasoning ? 'max_completion_tokens' : 'max_tokens';
     final request =
         http.Request(
             'POST',
@@ -1199,7 +1240,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
             ],
             'stream': false,
             'temperature': 0.2,
-            'max_tokens': 1000,
+            tokenKey: 1000,
           });
 
     final streamed = await _sendWithProxyFallback(http.Client(), request, syncSettings);
@@ -1553,6 +1594,25 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     }
   }
 
+  Future<http.Response> _postWithProxyFallback(
+    Uri uri,
+    Map<String, String> headers,
+    dynamic body,
+    SyncSettings syncSettings,
+  ) async {
+    final request = http.Request('POST', uri)
+      ..headers.addAll(headers);
+    if (body is String) {
+      request.body = body;
+    } else if (body is List<int>) {
+      request.bodyBytes = body;
+    } else if (body is Map) {
+      request.body = jsonEncode(body);
+    }
+    final streamed = await _sendWithProxyFallback(_globalClient, request, syncSettings);
+    return http.Response.fromStream(streamed);
+  }
+
   Future<http.Response> _getWithProxyFallback(
     Uri uri,
     Map<String, String> headers,
@@ -1633,50 +1693,118 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
   ) async {
     if (settings.webSearchMode == 'off') return false;
     if (settings.webSearchMode == 'on') return true;
-    if (model.toLowerCase().contains('antigravity') ||
-        (endpoint != null && endpoint.name.toLowerCase().contains('antigravity'))) {
-      return true;
-    }
-    final text = prompt.toLowerCase();
-    const triggers = [
-      'latest',
-      'recent',
-      'today',
-      'current',
-      'news',
-      'price',
-      'stock',
-      'score',
-      'schedule',
-      'weather',
-      'happening',
-      '2026',
-      'search web',
-      'search the web',
-      'search on web',
-      'search internet',
-      'search the internet',
-      'google this',
-      'find out',
-      'what is the latest',
-      'who won',
-      'what is the weather',
-      // Indonesian triggers
-      'terbaru',
-      'terkini',
-      'hari ini',
-      'sekarang',
-      'berita',
-      'harga',
-      'cuaca',
-      'jadwal',
-      'sedang terjadi',
+    return _isSearchWorthyPrompt(prompt);
+  }
+
+  bool _isSearchWorthyPrompt(String rawPrompt) {
+    final text = rawPrompt.trim().toLowerCase();
+    if (text.isEmpty) return false;
+
+    // 1. Explicit search requests override everything
+    final explicitSearchRegex = RegExp(
+      r'\b(search\s+(the\s+)?(web|internet)|search\s+online|google\s+this|look\s+up\s+online|browse\s+(the\s+)?web|cari\s+di\s+(web|internet|google)|googling|searching|search\s+for|fact\s*check)\b',
+      caseSensitive: false,
+    );
+    if (explicitSearchRegex.hasMatch(text)) return true;
+
+    // 2. Casual greetings & conversational pleasantries
+    final isCasualGreeting = RegExp(
+      r'^(hi|hello|hey|halo|hai|selamat\s+(pagi|siang|sore|malam)|terima\s+kasih|makasih|thanks|thank\s+you|siapa\s+kamu|who\s+are\s+you|how\s+are\s+you|apa\s+kabar)[\s.?!]*$',
+      caseSensitive: false,
+    ).hasMatch(text);
+    if (isCasualGreeting) return false;
+
+    // 3. Creative writing / translation / summarization / math without temporal anchors
+    final isCreativeOrTransform = RegExp(
+      r'^(translate|terjemahkan|summarize|rangkum|paraphrase|ringkas|buatkan\s+puisi|tuliskan\s+puisi|ceritakan\s+dong|write\s+a\s+poem|tell\s+me\s+a\s+story)\b',
+      caseSensitive: false,
+    ).hasMatch(text) && !text.contains('202') && !text.contains('news') && !text.contains('berita');
+    if (isCreativeOrTransform) return false;
+
+    final isPureMath = RegExp(
+      r'^(hitung|calculate|solve|what\s+is)\s+[\d\s+\-*/^().=]+$',
+      caseSensitive: false,
+    ).hasMatch(text);
+    if (isPureMath) return false;
+
+    // 4. Positive temporal, news, and live data triggers
+    final liveTriggers = [
+      // Temporal indicators
+      'latest', 'recent', 'today', 'tonight', 'yesterday', 'this week', 'this month',
+      'this year', 'current', 'upcoming', 'roadmap',
+      'terbaru', 'terkini', 'hari ini', 'kemarin', 'minggu ini', 'bulan ini', 'tahun ini',
+      'sekarang', 'saat ini', 'mendatang',
+      // News & events
+      'news', 'breaking news', 'update', 'updates', 'announcement', 'released',
+      'release date', 'changelog', 'berita', 'kabar', 'rilis', 'tanggal rilis',
+      'peluncuran', 'kejadian', 'peristiwa', 'sedang viral', 'lagi viral', 'isu terkini',
+      // Real-time metrics
+      'price', 'stock', 'crypto', 'weather', 'score', 'standing', 'who won', 'match result',
+      'live score', 'harga', 'kurs', 'cuaca', 'skor', 'hasil pertandingan', 'siapa menang',
+      'jadwal', 'klasemen', 'gempa',
+      // Real-world entities, contemporary status & status inquiries
+      'who is the current', 'who is currently', 'what happened to',
+      'siapa presiden', 'siapa menteri', 'siapa ceo', 'siapa ketua', 'apa yang terjadi',
+      'perkembangan terbaru', 'kondisi saat ini',
+      // Target years
+      '2025', '2026', '2027',
     ];
-    return triggers.any(text.contains);
+
+    final hasLiveTrigger = liveTriggers.any((trigger) {
+      if (trigger.contains(' ')) {
+        return text.contains(trigger);
+      }
+      return RegExp(r'\b' + RegExp.escape(trigger) + r'\b', caseSensitive: false).hasMatch(text);
+    });
+
+    if (hasLiveTrigger) return true;
+
+    // 5. Pure code generation / syntax / debugging requests (without live triggers) should not search
+    final isCodeRequest = RegExp(
+      r'^(write|create|generate|implement|fix|debug|refactor|buatkan|bikin|tuliskan|buat)\s+(a|an|the|code|function|class|method|script|regex|query|component|program|aplikasi|fungsi|kode|skrip)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
+    if (isCodeRequest) return false;
+
+    // 6. General real-world factual questions
+    final isFactQuestion = RegExp(
+      r'^(what\s+is\s+the\s+status|when\s+will|when\s+is|who\s+is\s+the|kapan\s+jadwal|kapan\s+rilis|berapa\s+harga|gimana\s+kondisi|bagaimana\s+keadaan)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
+    if (isFactQuestion) return true;
+
+    return false;
+  }
+
+  String _reformulateSearchQuery(String query) {
+    var q = query.trim();
+    final lower = q.toLowerCase();
+    final now = DateTime.now();
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    final currentMonth = months[now.month - 1];
+    final currentYear = now.year.toString();
+
+    // Check if temporal indicator is present
+    final hasTemporal = RegExp(
+      r'\b(latest|recent|current|new|newest|today|yesterday|this week|this month|this year|upcoming|update|updates|news|terbaru|terkini|sekarang|hari ini|berita)\b',
+      caseSensitive: false,
+    ).hasMatch(lower);
+
+    // If temporal and user didn't specify a 4-digit year (e.g. 2024, 2025, 2026)
+    if (hasTemporal && !RegExp(r'\b202\d\b').hasMatch(q)) {
+      q = '$q $currentMonth $currentYear';
+    } else if (hasTemporal && !q.contains(currentYear)) {
+      // If user had an older year or no 2026, add current year anchor
+      q = '$q $currentYear';
+    }
+    return q;
   }
 
   Future<String> _performSearch(
-    String query,
+    String rawQuery,
     GenerationSettings settings,
     List<EndpointConfig> endpoints,
     List<EndpointModel> endpointModels,
@@ -1684,18 +1812,326 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     SyncSettings syncSettings,
     StatusCallback onStatus,
   ) async {
+    final query = _reformulateSearchQuery(rawQuery);
     final engine = settings.webSearchEngine;
-    onStatus('Searching the web...');
+    onStatus('Searching the web for "$query"...');
     if (engine == 'antigravity') {
+      // 1. Resolve Antigravity / 9router endpoint
+      EndpointConfig? antigravityEndpoint;
+      if (settings.antigravityEndpointId.isNotEmpty) {
+        antigravityEndpoint = endpoints
+            .where((item) => item.id == settings.antigravityEndpointId)
+            .cast<EndpointConfig?>()
+            .firstOrNull;
+      }
+      antigravityEndpoint ??= endpoints
+          .where((item) =>
+              item.enabled &&
+              (item.name.toLowerCase().contains('antigravity') ||
+               item.name.toLowerCase().contains('9router') ||
+               item.url.toLowerCase().contains('9router')))
+          .cast<EndpointConfig?>()
+          .firstOrNull;
+      antigravityEndpoint ??= endpoints
+          .where((item) => item.enabled && item.url.trim().isNotEmpty)
+          .cast<EndpointConfig?>()
+          .firstOrNull;
+
+      if (antigravityEndpoint == null || antigravityEndpoint.url.trim().isEmpty) {
+        throw Exception(
+          'Antigravity / 9router endpoint is not configured. Please select or add your 9router endpoint in Settings -> Web Search.',
+        );
+      }
+
+      var modelToUse = settings.antigravityModel.trim();
+      if (modelToUse.isEmpty) {
+        final preferred = antigravityEndpoint.models
+            .where((m) =>
+                m.toLowerCase().contains('gemini') ||
+                m.toLowerCase().contains('antigravity') ||
+                m.toLowerCase().contains('flash'))
+            .cast<String?>()
+            .firstOrNull;
+        modelToUse = preferred ??
+            (antigravityEndpoint.models.isNotEmpty
+                ? antigravityEndpoint.models.first
+                : 'gemini-2.0-flash');
+      }
+      final cleanModel = modelToUse.replaceFirst(RegExp(r'^models/'), '').trim();
+
+      final now = DateTime.now();
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+      const weekdays = [
+        'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+      ];
+      final monthName = months[now.month - 1];
+      final weekdayName = weekdays[now.weekday - 1];
+      final temporalPrompt =
+          "TEMPORAL CONTEXT: Today's date is $weekdayName, $monthName ${now.day}, ${now.year}. The current year is ${now.year}. Your real-time knowledge anchor is $monthName ${now.year}. You are an autonomous web search and live grounding assistant. Ground your response using Google Search with current, real-time facts, live news, and include direct source URLs.";
+
+      onStatus('Connecting to 9router Antigravity grounding adapter (${antigravityEndpoint.name})...');
+
+      final baseUrl = _endpointBase(antigravityEndpoint.url);
+      final rootUrl = baseUrl.replaceAll(RegExp(r'/v1(beta)?/?$'), '');
+      final keyParam = (antigravityEndpoint.key.isNotEmpty && antigravityEndpoint.key != 'sk-...')
+          ? {'key': antigravityEndpoint.key}
+          : <String, String>{};
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (antigravityEndpoint.key.isNotEmpty && antigravityEndpoint.key != 'sk-...') ...{
+          'Authorization': 'Bearer ${antigravityEndpoint.key}',
+        },
+      };
+
+      // Adapter Phase 1: Direct 9router /v1/search endpoint with Antigravity OAuth provider
+      final searchUrls = <Uri>[
+        Uri.parse('$baseUrl/search'),
+        Uri.parse('$rootUrl/v1/search'),
+        Uri.parse('$rootUrl/search'),
+      ];
+
+      final seenSearchUrls = <String>{};
+      final uniqueSearchUrls = searchUrls.where((u) => seenSearchUrls.add(u.toString())).toList();
+
+      for (final searchUri in uniqueSearchUrls) {
+        int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            onStatus('Querying 9router Antigravity search gateway (${searchUri.path})...');
+            final requestBody = jsonEncode({
+              'model': 'antigravity',
+              'query': query,
+              'max_results': 8,
+            });
+
+            final response = await _postWithProxyFallback(
+              searchUri,
+              headers,
+              requestBody,
+              syncSettings,
+            );
+
+            if (response.statusCode >= 200 && response.statusCode < 300) {
+              final data = jsonDecode(response.body);
+              if (data is Map) {
+                final answerMap = data['answer'];
+                final answerText = answerMap is Map ? stringValue(answerMap['text']).trim() : '';
+                final rawResults = data['results'] is List ? data['results'] as List : const [];
+                final parsedResults = <Map<String, String>>[];
+
+                for (final item in rawResults) {
+                  if (item is Map) {
+                    final title = stringValue(item['title'], 'Source').trim();
+                    final url = stringValue(item['url']).trim();
+                    final snippet = stringValue(item['snippet'] ?? item['content']).trim();
+                    if (url.isNotEmpty) {
+                      parsedResults.add({
+                        'title': title,
+                        'url': url,
+                        'snippet': snippet,
+                      });
+                    }
+                  }
+                }
+
+                if (answerText.isNotEmpty || parsedResults.isNotEmpty) {
+                  final citationsList = <String>[];
+                  for (final res in parsedResults) {
+                    final t = res['title'] ?? 'Source';
+                    final u = res['url'] ?? '';
+                    if (u.isNotEmpty && !citationsList.any((c) => c.contains(u))) {
+                      citationsList.add('• [$t]($u)');
+                    }
+                  }
+
+                  final citationsBlock = citationsList.isNotEmpty
+                      ? '\n\n**Sources & Citations:**\n${citationsList.take(8).join('\n')}'
+                      : '';
+
+                  final groundingBody = answerText.isNotEmpty
+                      ? answerText
+                      : _formatResults(parsedResults);
+
+                  onStatus('9router Antigravity grounded search complete (${parsedResults.length} sources).');
+                  return '\n\n[Antigravity Live Grounding Context]\n$groundingBody$citationsBlock\n[End of Grounding Context]\n\nUsing the verified Antigravity search context above, answer the user request accurately and include direct markdown citation links for all referenced facts:\n';
+                }
+              }
+            } else if (response.statusCode == 429 || response.statusCode == 503) {
+              // Retryable error from upstream OAuth or rate limit
+              if (attempt < maxAttempts) {
+                onStatus('9router search busy (${response.statusCode}), retrying in ${attempt * 2}s...');
+                await Future.delayed(Duration(seconds: attempt * 2));
+                continue;
+              }
+            }
+          } catch (e) {
+            debugPrint('9router /search ($searchUri) attempt $attempt error: $e');
+            if (attempt < maxAttempts) {
+              await Future.delayed(Duration(seconds: attempt));
+            }
+          }
+        }
+      }
+
+      // Adapter Phase 2: Native Gemini Google Search Grounding fallback payload to 9router
+      final geminiGroundingPayload = {
+        'system_instruction': {
+          'parts': [
+            {'text': temporalPrompt},
+          ],
+        },
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': query},
+            ],
+          },
+        ],
+        'tools': [
+          {'googleSearch': {}},
+        ],
+      };
+
+      final candidateUrls = <Uri>[
+        Uri.parse('$rootUrl/v1beta/models/$cleanModel:generateContent').replace(
+          queryParameters: keyParam.isNotEmpty ? keyParam : null,
+        ),
+        Uri.parse('$baseUrl/models/$cleanModel:generateContent').replace(
+          queryParameters: keyParam.isNotEmpty ? keyParam : null,
+        ),
+        if (rootUrl != baseUrl)
+          Uri.parse('$rootUrl/v1/models/$cleanModel:generateContent').replace(
+            queryParameters: keyParam.isNotEmpty ? keyParam : null,
+          ),
+      ];
+
+      for (final candidateUri in candidateUrls) {
+        try {
+          onStatus('Querying 9router Antigravity native grounding...');
+          final response = await _postWithProxyFallback(
+            candidateUri,
+            {
+              ...headers,
+              if (antigravityEndpoint.key.isNotEmpty && antigravityEndpoint.key != 'sk-...')
+                'x-goog-api-key': antigravityEndpoint.key,
+            },
+            geminiGroundingPayload,
+            syncSettings,
+          );
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            final data = jsonDecode(response.body);
+            final text = _geminiText(data);
+            if (text.trim().isNotEmpty) {
+              final sources = _extractGroundingSources(data);
+              onStatus('9router Antigravity live grounding complete.');
+              return '\n\n[Antigravity Live Grounding Context]\n${text.trim()}$sources\n[End of Grounding Context]\n\nUsing the research findings above as context, answer the user request:\n';
+            }
+          }
+        } catch (e) {
+          debugPrint('9router native route ($candidateUri) error: $e');
+        }
+      }
+
+      // Adapter Phase 2: OpenAI /chat/completions translation with Google Grounding tools on 9router
+      try {
+        onStatus('Adapting search query via 9router completions gateway...');
+        final isReasoningModel = cleanModel.toLowerCase().startsWith('o1') ||
+            cleanModel.toLowerCase().startsWith('o3') ||
+            cleanModel.toLowerCase().startsWith('gpt-5') ||
+            cleanModel.toLowerCase().contains('reasoning');
+        final tokenKey = isReasoningModel ? 'max_completion_tokens' : 'max_tokens';
+
+        final request = http.Request(
+          'POST',
+          Uri.parse('$baseUrl/chat/completions'),
+        )
+          ..headers.addAll({
+            'Content-Type': 'application/json',
+            if (antigravityEndpoint.key.isNotEmpty && antigravityEndpoint.key != 'sk-...')
+              'Authorization': 'Bearer ${antigravityEndpoint.key}',
+          })
+          ..body = jsonEncode({
+            'model': cleanModel,
+            'messages': [
+              {
+                'role': 'system',
+                'content': temporalPrompt,
+              },
+              {'role': 'user', 'content': query},
+            ],
+            'tools': [
+              {'googleSearch': {}},
+            ],
+            'web_search': true,
+            'temperature': 0.2,
+            tokenKey: 2048,
+          });
+
+        final streamed = await _sendWithProxyFallback(_globalClient, request, syncSettings);
+        final body = await streamed.stream.bytesToString();
+        if (streamed.statusCode >= 200 && streamed.statusCode < 300) {
+          final data = jsonDecode(body);
+          final choice = data['choices']?[0];
+          final content = choice?['message']?['content'] ?? choice?['text'];
+          if (content != null && stringValue(content).trim().isNotEmpty) {
+            onStatus('9router Antigravity research complete.');
+            return '\n\n[Antigravity Live Grounding Context]\n${stringValue(content).trim()}\n[End of Grounding Context]\n\nUsing the research findings above as context, answer the user request:\n';
+          }
+        }
+      } catch (e) {
+        debugPrint('9router completions translation error: $e');
+      }
+
+      // Non-Google fallbacks: Tavily (if key provided) or DuckDuckGo proxy (strictly no Google official fallback)
+      if (settings.tavilyApiKey.trim().isNotEmpty) {
+        try {
+          onStatus('Querying Tavily fallback for Antigravity search...');
+          final response = await _postWithProxyFallback(
+            Uri.parse('https://api.tavily.com/search'),
+            {'Content-Type': 'application/json'},
+            {
+              'api_key': settings.tavilyApiKey.trim(),
+              'query': query,
+              'search_depth': 'basic',
+              'max_results': 6,
+            },
+            syncSettings,
+          );
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            final data = jsonDecode(response.body);
+            final items = data['results'] is List ? data['results'] as List : const [];
+            final results = items
+                .whereType<Map>()
+                .map((item) => {
+                      'title': stringValue(item['title'], 'Untitled'),
+                      'url': stringValue(item['url']),
+                      'snippet': stringValue(item['content']),
+                    })
+                .toList();
+            if (results.isNotEmpty) {
+              onStatus('Tavily found ${results.length} live results.');
+              return _searchBlock(results);
+            }
+          }
+        } catch (_) {}
+      }
+
+      // DuckDuckGo fallback
       try {
         final uri = Uri.https('html.duckduckgo.com', '/html/', {'q': query});
-        final response = await _globalClient.get(
+        final response = await _getWithProxyFallback(
           uri,
-          headers: {
+          {
             'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
-        ).timeout(const Duration(seconds: 10));
+          syncSettings,
+        );
 
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final html = response.body;
@@ -1733,58 +2169,20 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         }
       } catch (_) {}
 
-      // Antigravity fallback to Lite
-      final response = await http.post(
-        Uri.parse('https://lite.duckduckgo.com/lite/'),
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-        body: 'q=${Uri.encodeQueryComponent(query)}',
+      throw Exception(
+        'Antigravity search via 9router failed. Please verify that your 9router endpoint is online and model "$cleanModel" supports web search grounding.',
       );
-
-      final html = response.body;
-      final results = <Map<String, String>>[];
-      final linkRegex = RegExp(r"<a[^>]+href=\x22([^\x22]+)\x22[^>]*class='result-link'[^>]*>(.*?)</a>");
-      final snippetRegex = RegExp(r"<td class='result-snippet'>\s*(.*?)\s*</td>", dotAll: true);
-      final linkMatches = linkRegex.allMatches(html).toList();
-      final snippetMatches = snippetRegex.allMatches(html).toList();
-
-      for (int i = 0; i < linkMatches.length; i++) {
-        var url = linkMatches[i].group(1) ?? '';
-        if (url.startsWith('//')) {
-          url = 'https:$url';
-        } else if (url.startsWith('/')) {
-          url = 'https://lite.duckduckgo.com$url';
-        }
-        var title = linkMatches[i].group(2) ?? '';
-        title = title.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&#x27;', "'").replaceAll('&quot;', '"').replaceAll('&amp;', '&');
-        var snippet = i < snippetMatches.length ? snippetMatches[i].group(1) ?? '' : '';
-        snippet = snippet.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&#x27;', "'").replaceAll('&quot;', '"').replaceAll('&amp;', '&');
-        if (url.isNotEmpty && title.isNotEmpty && !url.contains('duckduckgo.com/lite/')) {
-          results.add({
-            'title': title.trim(),
-            'url': url,
-            'snippet': snippet.trim(),
-          });
-        }
-      }
-
-      if (results.isEmpty) {
-        throw Exception('Antigravity search returned no web results.');
-      }
-      onStatus('Antigravity found ${results.length} results.');
-      return _searchBlock(results.take(8).toList());
     }
 
     if (engine == 'duckduckgo') {
-      final response = await http.post(
+      final response = await _postWithProxyFallback(
         Uri.parse('https://lite.duckduckgo.com/lite/'),
-        headers: {
+        {
           'Content-Type': 'application/x-www-form-urlencoded',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         },
-        body: 'q=${Uri.encodeQueryComponent(query)}',
+        'q=${Uri.encodeQueryComponent(query)}',
+        syncSettings,
       );
 
       final html = response.body;
@@ -1838,7 +2236,11 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         'q': query,
         'num': '8',
       });
-      final data = await _getJson(uri);
+      final response = await _getWithProxyFallback(uri, const {}, syncSettings);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Google Custom Search request failed with status ${response.statusCode}.');
+      }
+      final data = Map<String, dynamic>.from(jsonDecode(response.body));
       final items = data['items'] is List ? data['items'] as List : const [];
       final results = items
           .whereType<Map>()
@@ -1861,16 +2263,17 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       if (settings.tavilyApiKey.trim().isEmpty) {
         throw Exception('Tavily API key is not configured.');
       }
-      final response = await _globalClient.post(
+      final response = await _postWithProxyFallback(
         Uri.https('api.tavily.com', '/search'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+        {'Content-Type': 'application/json'},
+        {
           'api_key': settings.tavilyApiKey.trim(),
           'query': query,
           'search_depth': 'advanced',
           'include_answer': true,
           'max_results': 8,
-        }),
+        },
+        syncSettings,
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(
@@ -1969,6 +2372,12 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
           settings.webSearchModel.isEmpty) {
         throw Exception('Web search endpoint or model is not configured.');
       }
+      final isReasoningModel = settings.webSearchModel.toLowerCase().startsWith('o1') ||
+          settings.webSearchModel.toLowerCase().startsWith('o3') ||
+          settings.webSearchModel.toLowerCase().startsWith('gpt-5') ||
+          settings.webSearchModel.toLowerCase().contains('reasoning');
+      final tokenKey = isReasoningModel ? 'max_completion_tokens' : 'max_tokens';
+
       final request =
           http.Request(
               'POST',
@@ -1989,6 +2398,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
                 {'role': 'user', 'content': query},
               ],
               'temperature': 0.2,
+              tokenKey: 2048,
             });
       final response = await _sendWithProxyFallback(_globalClient, request, syncSettings);
       final body = await response.stream.bytesToString();
@@ -2016,10 +2426,10 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       '/v1beta/models/${settings.webSearchModel.isEmpty ? 'gemini-flash-lite-latest' : settings.webSearchModel}:generateContent',
       {'key': geminiApiKey.trim()},
     );
-    final response = await _globalClient.post(
+    final response = await _postWithProxyFallback(
       uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+      {'Content-Type': 'application/json'},
+      {
         'contents': [
           {
             'role': 'user',
@@ -2031,7 +2441,8 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         'tools': [
           {'googleSearch': {}},
         ],
-      }),
+      },
+      syncSettings,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
@@ -2043,16 +2454,6 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     if (text.isEmpty) throw Exception('Gemini web search returned no text.');
     onStatus('Gemini search complete.');
     return '\n\n[Web Search Results]\n$text\n[End of Search Results]\n\nUsing the search results above as context, answer the user question. Cite source links when available:\n';
-  }
-
-  Future<Map<String, dynamic>> _getJson(Uri uri) async {
-    final response = await _globalClient
-        .get(uri)
-        .timeout(const Duration(seconds: 12));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Request failed with status ${response.statusCode}.');
-    }
-    return Map<String, dynamic>.from(jsonDecode(response.body));
   }
 
   String _searchBlock(List<Map<String, String>> results) {
@@ -2071,20 +2472,51 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
   }
 
   String _systemText(VoiceSettings settings) {
+    final now = DateTime.now();
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    final monthName = months[now.month - 1];
+    final weekdayName = weekdays[now.weekday - 1];
+    final temporalAnchor =
+        "TEMPORAL CONTEXT: Today's date is $weekdayName, $monthName ${now.day}, ${now.year}. The current year is ${now.year}. Your real-time knowledge anchor is $monthName ${now.year}. When the user asks for latest, recent, current, or today's news, information, or releases, operate strictly based on ${now.year}.\n\n";
+
+    String basePrompt;
     if (settings.textPersonality == 'Custom') {
-      return settings.customTextPersonality.isEmpty
+      basePrompt = settings.customTextPersonality.isEmpty
           ? _textPrompts['Assistant']!
           : settings.customTextPersonality;
-    }
-    if (settings.textPersonality.startsWith('custom-text:')) {
+    } else if (settings.textPersonality.startsWith('custom-text:')) {
       final id = settings.textPersonality.replaceFirst('custom-text:', '');
-      return settings.customTextPersonalities
+      basePrompt = settings.customTextPersonalities
               .where((item) => item.id == id)
               .firstOrNull
               ?.prompt ??
           _textPrompts['Assistant']!;
+    } else {
+      basePrompt = _textPrompts[settings.textPersonality] ?? _textPrompts['Assistant']!;
     }
-    return _textPrompts[settings.textPersonality] ?? _textPrompts['Assistant']!;
+    return '$temporalAnchor$basePrompt';
   }
 
   EndpointModel? _resolveEndpointModel(
@@ -2186,6 +2618,31 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
         .join();
   }
 
+  String _extractGroundingSources(dynamic data) {
+    try {
+      final metadata = data['candidates']?[0]?['groundingMetadata'];
+      if (metadata is Map) {
+        final chunks = metadata['groundingChunks'];
+        if (chunks is List) {
+          final links = <String>[];
+          for (final chunk in chunks) {
+            if (chunk is Map && chunk['web'] is Map) {
+              final uri = stringValue(chunk['web']['uri']);
+              final title = stringValue(chunk['web']['title'], uri);
+              if (uri.isNotEmpty && !links.contains(uri)) {
+                links.add('• [$title]($uri)');
+              }
+            }
+          }
+          if (links.isNotEmpty) {
+            return '\n\nSources:\n${links.take(8).join('\n')}';
+          }
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
   String _extractApiError(String body, String fallback) {
     final trimmed = body.trim();
     if (trimmed.startsWith('<!DOCTYPE') ||
@@ -2232,6 +2689,135 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       return uri.replace(path: nextPath.isEmpty ? '/' : nextPath).toString();
     }
     return base;
+  }
+
+  /// Checks whether a prompt asks to generate, draw, create or edit an image.
+  bool isImageGenerationPrompt(String prompt) {
+    final lower = prompt.toLowerCase().trim();
+    final patterns = [
+      RegExp(r'\b(buatkan|buat|bikin|bikinin|gambarin|gambarkan|lukis|lukiskan|fotokan|generate|render|draw|paint|create|produce|desain|design|sketsa)\b.*\b(gambar|image|foto|photo|lukisan|artwork|wallpaper|poster|ilustrasi|illustration|avatar|vektor|vector|logo|icon|sketsa|sketch|karikatur|portrait)\b', caseSensitive: false),
+      RegExp(r'\b(gambar|image|foto|photo|lukisan|artwork|wallpaper|poster|ilustrasi|illustration)\b.*\b(tentang|dari|of|with|bertemakan|gaya|style|seperti|nuansa)\b', caseSensitive: false),
+      RegExp(r'\b(edit|ubah|ganti|tambahkan|tambah|kasih|remove|hapus|hilangkan|rubah|modify|warnai)\b.*\b(gambar|image|foto|photo|latar|warna|background|suasana|posisi|detail|objek|karakter)\b', caseSensitive: false),
+      RegExp(r'^(gambarin|gambarkan|lukis|lukiskan|draw|paint|fotokan)\b', caseSensitive: false),
+      RegExp(r'^(gambar|foto|photo|lukisan|ilustrasi|illustration|sketsa|sketch|wallpaper|poster)\b', caseSensitive: false),
+    ];
+    for (final p in patterns) {
+      if (p.hasMatch(lower)) return true;
+    }
+    return false;
+  }
+
+  /// Generates or edits an image using 9router Antigravity Image endpoint (`ag/gemini-3.1-flash-image`).
+  Future<AttachmentData> generateImage({
+    required String prompt,
+    String? inputImageBase64,
+    required List<EndpointConfig> endpoints,
+    required GenerationSettings settings,
+    required SyncSettings syncSettings,
+    required StatusCallback onStatus,
+  }) async {
+    // 1. Resolve Antigravity / 9router endpoint
+    EndpointConfig? antigravityEndpoint;
+    if (settings.antigravityEndpointId.isNotEmpty) {
+      antigravityEndpoint = endpoints
+          .where((item) => item.id == settings.antigravityEndpointId)
+          .cast<EndpointConfig?>()
+          .firstOrNull;
+    }
+    antigravityEndpoint ??= endpoints
+        .where((item) =>
+            item.enabled &&
+            (item.name.toLowerCase().contains('antigravity') ||
+             item.name.toLowerCase().contains('9router') ||
+             item.url.toLowerCase().contains('9router')))
+        .cast<EndpointConfig?>()
+        .firstOrNull;
+    antigravityEndpoint ??= endpoints
+        .where((item) => item.enabled && item.url.trim().isNotEmpty)
+        .cast<EndpointConfig?>()
+        .firstOrNull;
+
+    if (antigravityEndpoint == null || antigravityEndpoint.url.trim().isEmpty) {
+      throw Exception(
+        '9router / Antigravity endpoint is not configured. Please configure your 9router endpoint.',
+      );
+    }
+
+    final baseUrl = _endpointBase(antigravityEndpoint.url);
+    final rootUrl = baseUrl.replaceAll(RegExp(r'/v1(beta)?/?$'), '');
+    final imageUri = Uri.parse('$rootUrl/v1/images/generations');
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (antigravityEndpoint.key.isNotEmpty && antigravityEndpoint.key != 'sk-...') ...{
+        'Authorization': 'Bearer ${antigravityEndpoint.key}',
+      },
+    };
+
+    onStatus(inputImageBase64 != null && inputImageBase64.isNotEmpty
+        ? 'Applying edits to image via Antigravity image engine...'
+        : 'Generating image via Antigravity image engine (ag/gemini-3.1-flash-image)...');
+
+    final payload = <String, dynamic>{
+      'model': 'ag/gemini-3.1-flash-image',
+      'prompt': prompt,
+      'n': 1,
+      'response_format': 'b64_json',
+      if (inputImageBase64 != null && inputImageBase64.isNotEmpty) ...{
+        'image': inputImageBase64.startsWith('data:')
+            ? inputImageBase64
+            : 'data:image/jpeg;base64,$inputImageBase64',
+      },
+    };
+
+    final requestBody = jsonEncode(payload);
+
+    int maxAttempts = 3;
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final response = await _postWithProxyFallback(
+          imageUri,
+          headers,
+          requestBody,
+          syncSettings,
+        );
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final data = jsonDecode(response.body);
+          if (data is Map && data['data'] is List && (data['data'] as List).isNotEmpty) {
+            final firstItem = data['data'][0];
+            final b64 = firstItem is Map ? stringValue(firstItem['b64_json']).trim() : '';
+            if (b64.isNotEmpty) {
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              onStatus('Image generation completed successfully.');
+              return AttachmentData(
+                name: 'generated_$timestamp.jpg',
+                type: 'image/jpeg',
+                data: b64,
+              );
+            }
+          }
+          throw Exception('Image response received without image data.');
+        } else if (response.statusCode == 429 || response.statusCode == 503) {
+          if (attempt < maxAttempts) {
+            onStatus('Image generation busy (${response.statusCode}), retrying in ${attempt * 3}s...');
+            await Future.delayed(Duration(seconds: attempt * 3));
+            continue;
+          }
+          throw Exception('Image generation server busy (${response.statusCode}).');
+        } else {
+          final errorMsg = _extractApiError(response.body, 'Image generation failed with HTTP ${response.statusCode}');
+          throw Exception(errorMsg);
+        }
+      } catch (e) {
+        if (attempt >= maxAttempts) {
+          rethrow;
+        }
+        await Future.delayed(Duration(seconds: attempt * 2));
+      }
+    }
+
+    throw Exception('Failed to generate image after $maxAttempts attempts.');
   }
 
   static const _artifactInstruction =

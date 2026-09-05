@@ -130,7 +130,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
       // Mode Switching
       SlashCommand(name: 'text', description: 'Switch to normal text chat.', category: 'Mode Switching', action: (c, app) => false),
-      SlashCommand(name: 'image', description: 'Switch to image generation mode.', category: 'Mode Switching', action: (c, app) => false),
+      SlashCommand(name: 'image', description: 'Switch to image generation mode.', category: 'Mode Switching', action: (c, app) {
+        input.text = '/image ';
+        input.selection = TextSelection.fromPosition(TextPosition(offset: input.text.length));
+        return true;
+      }),
+      SlashCommand(name: 'draw', description: 'Draw or generate an image.', category: 'Mode Switching', action: (c, app) {
+        input.text = '/image ';
+        input.selection = TextSelection.fromPosition(TextPosition(offset: input.text.length));
+        return true;
+      }),
       SlashCommand(name: 'video', description: 'Switch to video generation mode.', category: 'Mode Switching', action: (c, app) => false),
       SlashCommand(name: 'live', description: 'Switch to live voice mode.', category: 'Mode Switching', action: (c, app) => false),
 
@@ -378,6 +387,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   onEditStart: _startEdit,
                   onEditCancel: _cancelEdit,
                   onEditSave: _saveEdit,
+                  onEditImage: _editImage,
                 ),
         ),
 
@@ -636,6 +646,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _AttachAction(
+                  icon: LucideIcons.sparkles,
+                  label: 'Generate Image',
+                  onTap: () {
+                    Navigator.pop(context);
+                    final text = input.text.trim();
+                    if (!text.toLowerCase().startsWith('/image')) {
+                      input.text = '/image $text'.trim();
+                    }
+                    input.selection = TextSelection.fromPosition(
+                      TextPosition(offset: input.text.length),
+                    );
+                  },
+                ),
+                _AttachAction(
                   icon: LucideIcons.image,
                   label: 'Photo',
                   onTap: () => _pickFiles(FileType.image),
@@ -654,6 +678,122 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   icon: LucideIcons.camera,
                   label: 'Camera',
                   onTap: _captureImage,
+                ),
+                Consumer<AdoetzAppState>(
+                  builder: (context, app, child) {
+                    final genSettings = app.genSettings;
+                    final currentEngine = genSettings.webSearchEngine;
+                    final isSearchEnabled = genSettings.webSearchMode != 'off';
+
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 12),
+                        Divider(height: 1, color: p.outline),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              children: [
+                                Icon(LucideIcons.globe, size: 16, color: p.primary),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Web Search Provider',
+                                  style: TextStyle(
+                                    color: p.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                ChoiceChip(
+                                  selected: currentEngine == 'antigravity' && isSearchEnabled,
+                                  avatar: const Icon(LucideIcons.sparkles, size: 14),
+                                  label: const Text('Antigravity (9router)'),
+                                  onSelected: (_) {
+                                    app.updateGenerationSettings(
+                                      genSettings.copyWith(
+                                        webSearchMode: 'auto',
+                                        webSearchEngine: 'antigravity',
+                                        webSearchProvider: 'antigravity',
+                                      ),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  selected: currentEngine == 'tavily' && isSearchEnabled,
+                                  avatar: const Icon(LucideIcons.search, size: 14),
+                                  label: const Text('Tavily AI'),
+                                  onSelected: (_) {
+                                    app.updateGenerationSettings(
+                                      genSettings.copyWith(
+                                        webSearchMode: 'auto',
+                                        webSearchEngine: 'tavily',
+                                        webSearchProvider: 'tavily',
+                                      ),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  selected: currentEngine == 'gemini' && isSearchEnabled,
+                                  avatar: const Icon(LucideIcons.bot, size: 14),
+                                  label: const Text('Gemini'),
+                                  onSelected: (_) {
+                                    app.updateGenerationSettings(
+                                      genSettings.copyWith(
+                                        webSearchMode: 'auto',
+                                        webSearchEngine: 'gemini',
+                                        webSearchProvider: 'gemini',
+                                      ),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  selected: currentEngine == 'duckduckgo' && isSearchEnabled,
+                                  avatar: const Icon(LucideIcons.compass, size: 14),
+                                  label: const Text('DuckDuckGo'),
+                                  onSelected: (_) {
+                                    app.updateGenerationSettings(
+                                      genSettings.copyWith(
+                                        webSearchMode: 'auto',
+                                        webSearchEngine: 'duckduckgo',
+                                        webSearchProvider: 'duckduckgo',
+                                      ),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  selected: !isSearchEnabled,
+                                  avatar: const Icon(LucideIcons.ban, size: 14),
+                                  label: const Text('Off'),
+                                  onSelected: (_) {
+                                    app.updateGenerationSettings(
+                                      genSettings.copyWith(webSearchMode: 'off'),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 Consumer<AdoetzAppState>(
                   builder: (context, app, child) {
@@ -826,6 +966,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (text.isEmpty) return;
     context.read<AdoetzAppState>().editMessage(message.id, text);
     _cancelEdit();
+  }
+
+  void _editImage(AttachmentData image) {
+    setState(() {
+      if (!attachments.any((a) => a.name == image.name && a.data == image.data)) {
+        attachments.add(image);
+      }
+      if (!input.text.trim().toLowerCase().startsWith('/image')) {
+        input.text = '/image ${input.text}'.trimLeft();
+      }
+      input.selection = TextSelection.fromPosition(
+        TextPosition(offset: input.text.length),
+      );
+    });
   }
 }
 
@@ -1270,6 +1424,7 @@ class _MessageList extends StatelessWidget {
     required this.onEditStart,
     required this.onEditCancel,
     required this.onEditSave,
+    this.onEditImage,
   });
 
   final ScrollController controller;
@@ -1278,6 +1433,7 @@ class _MessageList extends StatelessWidget {
   final ValueChanged<Message> onEditStart;
   final VoidCallback onEditCancel;
   final ValueChanged<Message> onEditSave;
+  final ValueChanged<AttachmentData>? onEditImage;
 
   @override
   Widget build(BuildContext context) {
@@ -1304,6 +1460,7 @@ class _MessageList extends StatelessWidget {
                   onEditStart: () => onEditStart(message),
                   onEditCancel: onEditCancel,
                   onEditSave: () => onEditSave(message),
+                  onEditImage: onEditImage,
                 ),
               ),
             ),
@@ -1323,6 +1480,7 @@ class _MessageBubble extends StatelessWidget {
     required this.onEditStart,
     required this.onEditCancel,
     required this.onEditSave,
+    this.onEditImage,
   });
 
   final Message message;
@@ -1332,6 +1490,7 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback onEditStart;
   final VoidCallback onEditCancel;
   final VoidCallback onEditSave;
+  final ValueChanged<AttachmentData>? onEditImage;
 
   @override
   Widget build(BuildContext context) {
@@ -1366,7 +1525,10 @@ class _MessageBubble extends StatelessWidget {
         crossAxisAlignment: align,
         children: [
           if (message.attachments.isNotEmpty)
-            _MessageAttachments(files: message.attachments),
+            _MessageAttachments(
+              files: message.attachments,
+              onEditImage: onEditImage,
+            ),
           if (message.attachments.isNotEmpty && hasContent)
             const SizedBox(height: 8),
           if (hasContent)
@@ -2550,9 +2712,10 @@ class _SearchStatusPillState extends State<_SearchStatusPill>
 }
 
 class _MessageAttachments extends StatelessWidget {
-  const _MessageAttachments({required this.files});
+  const _MessageAttachments({required this.files, this.onEditImage});
 
   final List<AttachmentData> files;
+  final ValueChanged<AttachmentData>? onEditImage;
 
   @override
   Widget build(BuildContext context) {
@@ -2564,23 +2727,63 @@ class _MessageAttachments extends StatelessWidget {
         children: files.map((file) {
           if (file.type.startsWith('image/') && file.data.isNotEmpty) {
             final bytes = base64Decode(file.data);
-            return GestureDetector(
-              onTap: () {
-                showDialog(
-                  context: context,
-                  useSafeArea: false,
-                  builder: (context) => _ImageDialog(bytes: bytes, filename: file.name),
-                );
-              },
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Image.memory(
-                  bytes,
-                  width: 180,
-                  height: 180,
-                  fit: BoxFit.cover,
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    showDialog(
+                      context: context,
+                      useSafeArea: false,
+                      builder: (context) => _ImageDialog(
+                        bytes: bytes,
+                        filename: file.name,
+                        onEdit: onEditImage != null ? () => onEditImage!(file) : null,
+                      ),
+                    );
+                  },
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.memory(
+                      bytes,
+                      width: 180,
+                      height: 180,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
                 ),
-              ),
+                if (onEditImage != null)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Material(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(16),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => onEditImage!(file),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(LucideIcons.sparkles, size: 12, color: Colors.white),
+                              SizedBox(width: 4),
+                              Text(
+                                'Edit',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             );
           }
           return _FileChip(file: file);
@@ -2649,10 +2852,15 @@ class _FileChip extends StatelessWidget {
 }
 
 class _ImageDialog extends StatelessWidget {
-  const _ImageDialog({required this.bytes, required this.filename});
+  const _ImageDialog({
+    required this.bytes,
+    required this.filename,
+    this.onEdit,
+  });
 
   final Uint8List bytes;
   final String filename;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -2676,16 +2884,36 @@ class _ImageDialog extends StatelessWidget {
           Positioned(
             bottom: 40,
             right: 20,
-            child: IconButton(
-              icon: const Icon(LucideIcons.download, color: Colors.white),
-              onPressed: () async {
-                await downloadFile(filename, bytes);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Saved $filename')),
-                  );
-                }
-              },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (onEdit != null) ...[
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: 0.2),
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(LucideIcons.sparkles, size: 16),
+                    label: const Text('Edit / Follow-up'),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onEdit!();
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                IconButton(
+                  icon: const Icon(LucideIcons.download, color: Colors.white),
+                  onPressed: () async {
+                    await downloadFile(filename, bytes);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Saved $filename')),
+                      );
+                    }
+                  },
+                ),
+              ],
             ),
           ),
         ],
@@ -3057,6 +3285,24 @@ class _InputPod extends StatelessWidget {
                 icon: LucideIcons.plus,
                 onPressed: onPick,
                 color: p.onSurface,
+              ),
+              RoundIconButton(
+                icon: LucideIcons.image,
+                tooltip: 'Generate / Edit image (/image)',
+                onPressed: () {
+                  final text = input.text.trim();
+                  if (text.toLowerCase().startsWith('/image')) {
+                    input.text = text.replaceFirst(RegExp(r'^/image\s*', caseSensitive: false), '');
+                  } else {
+                    input.text = '/image $text'.trim();
+                  }
+                  input.selection = TextSelection.fromPosition(
+                    TextPosition(offset: input.text.length),
+                  );
+                },
+                color: input.text.trim().toLowerCase().startsWith('/image')
+                    ? p.primary
+                    : p.onSurface,
               ),
               Expanded(
                 child: Container(

@@ -1086,12 +1086,11 @@ CREATE TABLE IF NOT EXISTS $q.chat_sessions (
     }
   }
 
-  String _directUserId(String token, [String secret = '']) {
+  String _directUserId(String token) {
     if (!token.startsWith('direct:')) return '';
     final raw = token.substring(7);
     try {
       if (raw.contains('.')) {
-        final key = SecretKey(secret.isNotEmpty ? secret : 'adoetzgpt_postgres_secret_');
         // If secret is passed or token is a JWT, verify or decode subject
         final jwt = JWT.decode(raw);
         if (jwt.payload is Map && jwt.payload['sub'] != null) {
