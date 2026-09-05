@@ -1106,6 +1106,10 @@ class AdoetzAppState extends ChangeNotifier {
       'midnightbloom' ||
       'midnight' ||
       'bloom' => 'midnight-bloom',
+      'cyberpunk-oled' ||
+      'cyberpunk' ||
+      'cyberpunkoled' ||
+      'oled' => 'cyberpunk-oled',
       _ => 'default',
     };
     if (visualTheme == normalized) return;

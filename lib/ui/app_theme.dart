@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-enum AppVisualTheme { classic, liquidGlass, auroraNeon, modernMinimal, ios26, midnightBloom }
+enum AppVisualTheme { classic, liquidGlass, auroraNeon, modernMinimal, ios26, midnightBloom, cyberpunkOled }
 
 class AppVisualThemeOption {
   const AppVisualThemeOption({
@@ -57,6 +57,12 @@ const appVisualThemeOptions = [
     description: 'Deep indigo garden with emerald, gold, and rose glow.',
     icon: LucideIcons.palette,
   ),
+  AppVisualThemeOption(
+    key: 'cyberpunk-oled',
+    label: 'Cyberpunk OLED',
+    description: 'Pitch black OLED contrast with electric neon magenta and cyber amber glow.',
+    icon: LucideIcons.zap,
+  ),
 ];
 
 AppVisualTheme appVisualThemeFromKey(String value) {
@@ -74,6 +80,10 @@ AppVisualTheme appVisualThemeFromKey(String value) {
     'midnightbloom' ||
     'midnight' ||
     'bloom' => AppVisualTheme.midnightBloom,
+    'cyberpunk-oled' ||
+    'cyberpunk' ||
+    'cyberpunkoled' ||
+    'oled' => AppVisualTheme.cyberpunkOled,
     _ => AppVisualTheme.classic,
   };
 }
@@ -86,6 +96,7 @@ String appVisualThemeKey(AppVisualTheme theme) {
     AppVisualTheme.modernMinimal => 'modern-minimal',
     AppVisualTheme.ios26 => 'ios26',
     AppVisualTheme.midnightBloom => 'midnight-bloom',
+    AppVisualTheme.cyberpunkOled => 'cyberpunk-oled',
   };
 }
 
@@ -146,6 +157,7 @@ class AppPalette {
   bool get isMinimal => visualTheme == AppVisualTheme.modernMinimal;
   bool get isIos26 => visualTheme == AppVisualTheme.ios26;
   bool get isMidnightBloom => visualTheme == AppVisualTheme.midnightBloom;
+  bool get isCyberpunkOled => visualTheme == AppVisualTheme.cyberpunkOled;
 
   factory AppPalette.fromBrightness(bool dark, {AppVisualTheme? visualTheme}) {
     final theme = visualTheme ?? _ThemeRuntime.visualTheme;
@@ -304,6 +316,39 @@ class AppPalette {
         sidebarRadius: 32,
         glassBlur: 18,
         motionScale: 1.1,
+      );
+    }
+    if (theme == AppVisualTheme.cyberpunkOled) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff000000) : const Color(0xff05070c),
+        surface: dark
+            ? const Color(0xff0b0d17)
+            : const Color(0xff121526),
+        surfaceDim: dark
+            ? const Color(0xff05070d)
+            : const Color(0xff0a0d18),
+        surfaceBright: dark
+            ? const Color(0xff161a2e)
+            : const Color(0xff1b2038),
+        primary: const Color(0xffff0055), // Neon cyber magenta
+        secondary: const Color(0xfffcee0a), // Cyberpunk amber/yellow
+        onSurface: const Color(0xffffffff),
+        onSurfaceVariant: const Color(0xff8c96ab),
+        outline: dark
+            ? const Color(0xffff0055).withValues(alpha: 0.28)
+            : const Color(0xffff0055).withValues(alpha: 0.38),
+        error: const Color(0xffff0033),
+        highlight: const Color(0xffff0055).withValues(alpha: 0.32),
+        glow: const Color(0xff00f0ff), // Laser cyan
+        shadow: Colors.black.withValues(alpha: 0.95),
+        panelRadius: 20,
+        cardRadius: 16,
+        controlRadius: 14,
+        sidebarRadius: 22,
+        glassBlur: 12,
+        motionScale: 1.15,
       );
     }
     return AppPalette(
@@ -754,7 +799,7 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
     final reducedMotion =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final shouldAnimate =
-        (p.isAurora || p.isLiquidGlass || p.isIos26 || p.isMidnightBloom) &&
+        (p.isAurora || p.isLiquidGlass || p.isIos26 || p.isMidnightBloom || p.isCyberpunkOled) &&
         !reducedMotion;
     if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
@@ -776,7 +821,18 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
         return DecoratedBox(
           decoration: BoxDecoration(
             color: p.background,
-            gradient: p.isMidnightBloom
+            gradient: p.isCyberpunkOled
+                ? RadialGradient(
+                    center: alignmentA,
+                    radius: 1.15,
+                    colors: [
+                      const Color(0xffff0055).withValues(alpha: 0.12),
+                      const Color(0xff00f0ff).withValues(alpha: 0.06),
+                      p.background,
+                    ],
+                    stops: const [0, 0.45, 1],
+                  )
+                : p.isMidnightBloom
                 ? LinearGradient(
                     begin: alignmentA,
                     end: alignmentB,

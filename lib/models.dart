@@ -2279,6 +2279,10 @@ String _normalizeVisualTheme(Object? value) {
     'midnightbloom' ||
     'midnight' ||
     'bloom' => 'midnight-bloom',
+    'cyberpunk-oled' ||
+    'cyberpunk' ||
+    'cyberpunkoled' ||
+    'oled' => 'cyberpunk-oled',
     _ => 'default',
   };
 }
