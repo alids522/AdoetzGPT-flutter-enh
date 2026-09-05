@@ -3896,21 +3896,56 @@ class _VoiceOverlay extends StatelessWidget {
           final compact = constraints.maxWidth < 430;
           final buttonSize = compact ? 42.0 : 48.0;
           final capsuleBaseWidth = compact ? 144.0 : 176.0;
+          final app = context.watch<AdoetzAppState>();
+          final isTranscribe = app.liveSpeechMode == LiveSpeechMode.transcribe;
+          final isTranslate = app.liveSpeechMode == LiveSpeechMode.translate;
+
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              RoundIconButton(
-                icon: LucideIcons.video,
-                size: buttonSize,
-                background: p.surfaceDim,
-                color: context.read<AdoetzAppState>().isLiveVideoEnabled
-                    ? p.primary
-                    : p.onSurface,
-                onPressed: () {
-                  context.read<AdoetzAppState>().toggleLiveVideo();
-                },
-              ),
-              SizedBox(width: compact ? 8 : 16),
+              if (!isTranscribe && !isTranslate) ...[
+                RoundIconButton(
+                  icon: LucideIcons.video,
+                  size: buttonSize,
+                  background: p.surfaceDim,
+                  color: app.isLiveVideoEnabled ? p.primary : p.onSurface,
+                  onPressed: () {
+                    context.read<AdoetzAppState>().toggleLiveVideo();
+                  },
+                ),
+                SizedBox(width: compact ? 8 : 16),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: p.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: p.primary.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isTranscribe ? LucideIcons.speech : LucideIcons.languages,
+                        size: 14,
+                        color: p.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        isTranscribe
+                            ? 'Transcribe'
+                            : 'Translate (${app.liveTranslateTargetLanguage.toUpperCase()})',
+                        style: TextStyle(
+                          color: p.primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: compact ? 8 : 12),
+              ],
               ValueListenableBuilder<double>(
                 valueListenable: levelNotifier,
                 builder: (context, level, _) {

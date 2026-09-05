@@ -39,6 +39,10 @@ class GeminiLiveService {
     this.tools,
     this.systemInstructionOverride,
     this.onToolCall,
+    this.responseModalities,
+    this.translationConfig,
+    this.audioTranscriptionConfig,
+    this.contextWindowCompression,
   });
 
   static const _inputSampleRate = 24000;
@@ -68,6 +72,10 @@ class GeminiLiveService {
   final List<Map<String, dynamic>>? tools;
   final String? systemInstructionOverride;
   final Future<Map<String, dynamic>> Function(String name, Map<String, dynamic> args)? onToolCall;
+  final List<String>? responseModalities;
+  final Map<String, dynamic>? translationConfig;
+  final Map<String, dynamic>? audioTranscriptionConfig;
+  final Map<String, dynamic>? contextWindowCompression;
 
   final _recorder = AudioRecorder();
   final _player = LiveAudioPlayer();
@@ -206,18 +214,27 @@ class GeminiLiveService {
   }
 
   Map<String, dynamic> _setupPayload() {
+    final modalities = responseModalities ?? const ['AUDIO'];
+    final isAudioModality = modalities.contains('AUDIO');
+
     return {
       'setup': {
         'model': _formatLiveModel(model),
         'generationConfig': {
-          'responseModalities': ['AUDIO'],
+          'responseModalities': modalities,
           'mediaResolution': 'MEDIA_RESOLUTION_MEDIUM',
-          'speechConfig': {
-            'voiceConfig': {
-              'prebuiltVoiceConfig': {'voiceName': _voiceName()},
+          if (isAudioModality)
+            'speechConfig': {
+              'voiceConfig': {
+                'prebuiltVoiceConfig': {'voiceName': _voiceName()},
+              },
             },
-          },
+          if (contextWindowCompression != null)
+            'contextWindowCompression': contextWindowCompression,
         },
+        if (translationConfig != null) 'translationConfig': translationConfig,
+        if (audioTranscriptionConfig != null)
+          'audioTranscriptionConfig': audioTranscriptionConfig,
         'systemInstruction': {
           'parts': [
             {'text': systemInstructionOverride ?? _systemInstruction()},
@@ -257,6 +274,10 @@ class GeminiLiveService {
           final parts = modelTurn['parts'];
           if (parts is List) {
             for (final part in parts.whereType<Map>()) {
+              final textPart = stringValue(part['text']);
+              if (textPart.isNotEmpty) {
+                onOutputTranscript(textPart, false);
+              }
               final inlineData = part['inlineData'];
               if (inlineData is Map) {
                 final encoded = stringValue(inlineData['data']);

@@ -17,6 +17,8 @@ const Map<String, Map<String, dynamic>> _translations = {
   'en': {
     'sidebar': {
       'newSession': 'New Session',
+      'liveTranscribe': 'Live Transcribe',
+      'liveTranslate': 'Live Translate',
       'recentSessions': 'Recent Sessions',
       'system': 'System',
       'clearAll': 'Clear All',
@@ -139,6 +141,8 @@ const Map<String, Map<String, dynamic>> _translations = {
   'id': {
     'sidebar': {
       'newSession': 'Sesi Baru',
+      'liveTranscribe': 'Transkripsi Langsung',
+      'liveTranslate': 'Terjemahan Langsung',
       'recentSessions': 'Sesi Terbaru',
       'system': 'Sistem',
       'clearAll': 'Hapus Semua',

@@ -74,6 +74,9 @@ class AdoetzAppState extends ChangeNotifier {
   bool isLiveRecording = false;
   bool isLiveVideoEnabled = false;
   bool isLiveFrontCamera = false;
+  LiveSpeechMode liveSpeechMode = LiveSpeechMode.voice;
+  String liveTranslateTargetLanguage = 'en';
+  String liveTranslateSourceLanguage = 'en';
   bool isFetchingModels = false;
   String syncStatus = '';
   String liveStatus = '';
@@ -2163,7 +2166,12 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persistAndScheduleRemote());
   }
 
-  Future<void> startLiveConversation({bool isOpenClawProxy = false}) async {
+  Future<void> startLiveConversation({
+    bool isOpenClawProxy = false,
+    LiveSpeechMode mode = LiveSpeechMode.voice,
+    String? targetLanguage,
+    String? sourceLanguage,
+  }) async {
     if (isLiveActive || isLiveConnecting) return;
 
     if (!kIsWeb) {
@@ -2177,13 +2185,74 @@ class AdoetzAppState extends ChangeNotifier {
 
     unawaited(_playSound('start_voice_mode.wav'));
 
-    final liveModels = _liveModelCandidates();
+    liveSpeechMode = mode;
+    if (targetLanguage != null) {
+      liveTranslateTargetLanguage = targetLanguage;
+    }
+    if (sourceLanguage != null) {
+      liveTranslateSourceLanguage = sourceLanguage;
+    }
+
+    final List<String> liveModels;
+    final List<String> responseModalities;
+    final Map<String, dynamic>? translationConfig;
+    final Map<String, dynamic>? audioTranscriptionConfig;
+    final Map<String, dynamic>? contextWindowCompression;
+    final String? customSysInstruction;
+
+    if (mode == LiveSpeechMode.transcribe) {
+      liveModels = [
+        'models/gemini-3.5-transcribe-live',
+        'gemini-3.5-transcribe-live',
+        'gemini-3.1-flash-live-preview',
+      ];
+      responseModalities = ['TEXT'];
+      translationConfig = null;
+      audioTranscriptionConfig = null;
+      contextWindowCompression = {
+        'triggerTokens': '104857',
+        'slidingWindow': {'targetTokens': '52428'},
+      };
+      customSysInstruction =
+          'You are a real-time voice transcription engine. Transcribe the incoming user audio accurately and continuously with no conversational filler or commentary.';
+    } else if (mode == LiveSpeechMode.translate) {
+      liveModels = [
+        'models/gemini-3.5-live-translate-preview',
+        'gemini-3.5-live-translate-preview',
+        'gemini-3.1-flash-live-preview',
+      ];
+      responseModalities = ['AUDIO'];
+      translationConfig = {
+        'targetLanguageCode': liveTranslateTargetLanguage,
+      };
+      audioTranscriptionConfig = {
+        'languageCodes': [liveTranslateSourceLanguage],
+      };
+      contextWindowCompression = {
+        'triggerTokens': '0',
+        'slidingWindow': {'targetTokens': '0'},
+      };
+      customSysInstruction =
+          'You are a real-time bidirectional live translator. Translate everything the speaker says immediately into ${liveTranslateTargetLanguage.toUpperCase()}. Speak the translation in natural fluent speech without extra preamble.';
+    } else {
+      liveModels = _liveModelCandidates();
+      responseModalities = ['AUDIO'];
+      translationConfig = null;
+      audioTranscriptionConfig = null;
+      contextWindowCompression = null;
+      customSysInstruction = null;
+    }
+
     _liveSessionId = currentSession.id;
     isLiveActive = true;
     isLiveConnecting = true;
     isLiveRecording = false;
     liveInputLevel = 0;
-    liveStatus = 'Connecting to Gemini Live...';
+    liveStatus = mode == LiveSpeechMode.transcribe
+        ? 'Connecting to Live Transcribe...'
+        : mode == LiveSpeechMode.translate
+            ? 'Connecting to Live Translate...'
+            : 'Connecting to Gemini Live...';
     syncStatus = '';
     _startLiveAutoSave();
     notifyListeners();
@@ -2197,10 +2266,10 @@ class AdoetzAppState extends ChangeNotifier {
     }
 
     Object? lastError;
-    
+
     String? openClawBaseUrl;
     String? openClawKey;
-    if (isOpenClawProxy) {
+    if (isOpenClawProxy && mode == LiveSpeechMode.voice) {
       final connector = agentConnectors.where((c) => c.id == activeChatTarget.connectorId).firstOrNull;
       if (connector != null) {
         openClawKey = connector.encryptedApiKey;
@@ -2225,13 +2294,17 @@ class AdoetzAppState extends ChangeNotifier {
         apiKey: geminiApiKey,
         model: liveModel,
         voiceSettings: voiceSettings,
-        history: currentSession.messages,
-        memories: genSettings.memoryEnabled ? memories : const [],
-        thinkingMode: isThinkingMode,
+        history: mode == LiveSpeechMode.voice ? currentSession.messages : const [],
+        memories: (genSettings.memoryEnabled && mode == LiveSpeechMode.voice) ? memories : const [],
+        thinkingMode: mode == LiveSpeechMode.voice ? isThinkingMode : false,
         userName: userName,
-        systemInstructionOverride: isOpenClawProxy 
+        responseModalities: responseModalities,
+        translationConfig: translationConfig,
+        audioTranscriptionConfig: audioTranscriptionConfig,
+        contextWindowCompression: contextWindowCompression,
+        systemInstructionOverride: customSysInstruction ?? (isOpenClawProxy
            ? 'You are a voice interface for the OpenClaw agent. Whenever the user asks a question, you MUST use the `query_openclaw_agent` tool to get the answer, and then read the answer back to the user exactly as provided.'
-           : null,
+           : null),
         tools: isOpenClawProxy ? [
            {
               'name': 'query_openclaw_agent',
@@ -2377,6 +2450,28 @@ class AdoetzAppState extends ChangeNotifier {
     _clearLiveState(clearStatus: false);
     _liveService = null;
     unawaited(LiveForegroundService.stop());
+    notifyListeners();
+  }
+
+  Future<void> startLiveTranscribe() async {
+    await startLiveConversation(mode: LiveSpeechMode.transcribe);
+  }
+
+  Future<void> startLiveTranslate({String targetLang = 'en', String sourceLang = 'en'}) async {
+    await startLiveConversation(
+      mode: LiveSpeechMode.translate,
+      targetLanguage: targetLang,
+      sourceLanguage: sourceLang,
+    );
+  }
+
+  void setLiveTranslateTargetLanguage(String lang) {
+    liveTranslateTargetLanguage = lang;
+    notifyListeners();
+  }
+
+  void setLiveTranslateSourceLanguage(String lang) {
+    liveTranslateSourceLanguage = lang;
     notifyListeners();
   }
 

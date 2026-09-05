@@ -6,6 +6,12 @@ const _idGenerator = Uuid();
 
 enum AppView { chat, settings, tokenUsage }
 
+enum LiveSpeechMode {
+  voice,
+  transcribe,
+  translate,
+}
+
 enum AppLanguage { en, id }
 
 AppLanguage normalizeLanguage(Object? value) {

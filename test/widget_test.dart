@@ -1,4 +1,5 @@
 import 'package:adoetzgpt/main.dart';
+import 'package:adoetzgpt/models.dart';
 import 'package:adoetzgpt/state/app_state.dart';
 import 'package:adoetzgpt/ui/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -100,5 +101,15 @@ void main() {
     expect(expectedVoices.contains('Zephyr'), isTrue);
     expect(expectedVoices.contains('Sulafat'), isTrue);
     expect(expectedVoices.contains('Sadaltager'), isTrue);
+  });
+
+  test('LiveSpeechMode and GeminiLiveService payload parameters', () {
+    final app = AdoetzAppState();
+    expect(app.liveSpeechMode, equals(LiveSpeechMode.voice));
+    expect(app.liveTranslateTargetLanguage, equals('en'));
+    expect(app.liveTranslateSourceLanguage, equals('en'));
+
+    app.setLiveTranslateTargetLanguage('id');
+    expect(app.liveTranslateTargetLanguage, equals('id'));
   });
 }

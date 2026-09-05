@@ -997,6 +997,36 @@ class _AppDrawerState extends State<_AppDrawer> {
                   duration: const Duration(milliseconds: 180),
                 ),
                 _NavTile(
+                  icon: LucideIcons.speech,
+                  label: copy.t('sidebar', 'liveTranscribe', 'Live Transcribe'),
+                  active: app.isLiveActive && app.liveSpeechMode == LiveSpeechMode.transcribe,
+                  onTap: () => _closeAfter(context, () async {
+                    if (app.isLiveActive && app.liveSpeechMode == LiveSpeechMode.transcribe) {
+                      await app.stopLiveConversation();
+                    } else {
+                      if (app.isLiveActive) {
+                        await app.stopLiveConversation();
+                      }
+                      await app.startLiveTranscribe();
+                    }
+                  }),
+                ),
+                _NavTile(
+                  icon: LucideIcons.languages,
+                  label: copy.t('sidebar', 'liveTranslate', 'Live Translate'),
+                  active: app.isLiveActive && app.liveSpeechMode == LiveSpeechMode.translate,
+                  onTap: () => _closeAfter(context, () async {
+                    if (app.isLiveActive && app.liveSpeechMode == LiveSpeechMode.translate) {
+                      await app.stopLiveConversation();
+                    } else {
+                      if (app.isLiveActive) {
+                        await app.stopLiveConversation();
+                      }
+                      await app.startLiveTranslate();
+                    }
+                  }),
+                ),
+                _NavTile(
                   icon: LucideIcons.trendingUp,
                   label: 'Token Usage',
                   active: app.currentView == AppView.tokenUsage,
