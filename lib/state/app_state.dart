@@ -1122,6 +1122,18 @@ class AdoetzAppState extends ChangeNotifier {
       'solarflare' ||
       'solar' ||
       'flare' => 'solar-flare',
+      'nordic-frost' ||
+      'nordicfrost' ||
+      'nordic' ||
+      'frost' => 'nordic-frost',
+      'obsidian-slate' ||
+      'obsidianslate' ||
+      'obsidian' ||
+      'slate' => 'obsidian-slate',
+      'tokyo-executive' ||
+      'tokyoexecutive' ||
+      'tokyo' ||
+      'executive' => 'tokyo-executive',
       _ => 'default',
     };
     if (visualTheme == normalized) return;

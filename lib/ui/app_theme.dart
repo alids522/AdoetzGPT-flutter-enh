@@ -15,6 +15,9 @@ enum AppVisualTheme {
   synthwave80s,
   matrixPhosphor,
   solarFlare,
+  nordicFrost,
+  obsidianSlate,
+  tokyoExecutive,
 }
 
 class AppVisualThemeOption {
@@ -92,6 +95,24 @@ const appVisualThemeOptions = [
     description: 'Molten sun ember with blazing magma orange, gold, and crimson plasma.',
     icon: LucideIcons.flame,
   ),
+  AppVisualThemeOption(
+    key: 'nordic-frost',
+    label: 'Nordic Frost',
+    description: 'Crisp sub-zero calm with arctic glacial blue, soft slate, and frosted silver clarity.',
+    icon: LucideIcons.compass,
+  ),
+  AppVisualThemeOption(
+    key: 'obsidian-slate',
+    label: 'Obsidian Slate',
+    description: 'Solid architectural darkness with deep charcoal granite and refined platinum balance.',
+    icon: LucideIcons.layers2,
+  ),
+  AppVisualThemeOption(
+    key: 'tokyo-executive',
+    label: 'Tokyo Executive',
+    description: 'Commanding corporate composure with deep midnight sapphire, ink grey, and brushed champagne.',
+    icon: LucideIcons.briefcaseBusiness,
+  ),
 ];
 
 AppVisualTheme appVisualThemeFromKey(String value) {
@@ -125,6 +146,18 @@ AppVisualTheme appVisualThemeFromKey(String value) {
     'solarflare' ||
     'solar' ||
     'flare' => AppVisualTheme.solarFlare,
+    'nordic-frost' ||
+    'nordicfrost' ||
+    'nordic' ||
+    'frost' => AppVisualTheme.nordicFrost,
+    'obsidian-slate' ||
+    'obsidianslate' ||
+    'obsidian' ||
+    'slate' => AppVisualTheme.obsidianSlate,
+    'tokyo-executive' ||
+    'tokyoexecutive' ||
+    'tokyo' ||
+    'executive' => AppVisualTheme.tokyoExecutive,
     _ => AppVisualTheme.classic,
   };
 }
@@ -141,6 +174,9 @@ String appVisualThemeKey(AppVisualTheme theme) {
     AppVisualTheme.synthwave80s => 'synthwave-80s',
     AppVisualTheme.matrixPhosphor => 'matrix-phosphor',
     AppVisualTheme.solarFlare => 'solar-flare',
+    AppVisualTheme.nordicFrost => 'nordic-frost',
+    AppVisualTheme.obsidianSlate => 'obsidian-slate',
+    AppVisualTheme.tokyoExecutive => 'tokyo-executive',
   };
 }
 
@@ -205,6 +241,9 @@ class AppPalette {
   bool get isSynthwave80s => visualTheme == AppVisualTheme.synthwave80s;
   bool get isMatrixPhosphor => visualTheme == AppVisualTheme.matrixPhosphor;
   bool get isSolarFlare => visualTheme == AppVisualTheme.solarFlare;
+  bool get isNordicFrost => visualTheme == AppVisualTheme.nordicFrost;
+  bool get isObsidianSlate => visualTheme == AppVisualTheme.obsidianSlate;
+  bool get isTokyoExecutive => visualTheme == AppVisualTheme.tokyoExecutive;
 
   factory AppPalette.fromBrightness(bool dark, {AppVisualTheme? visualTheme}) {
     final theme = visualTheme ?? _ThemeRuntime.visualTheme;
@@ -501,6 +540,111 @@ class AppPalette {
         sidebarRadius: 28,
         glassBlur: 18,
         motionScale: 1.15,
+      );
+    }
+    if (theme == AppVisualTheme.nordicFrost) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff0b1016) : const Color(0xfff0f4f8),
+        surface: dark
+            ? const Color(0xcc131d27)
+            : Colors.white.withValues(alpha: 0.88),
+        surfaceDim: dark
+            ? const Color(0x800e161e)
+            : const Color(0xb3e1e8f0),
+        surfaceBright: dark
+            ? const Color(0xff1a2835)
+            : const Color(0xffffffff),
+        primary: const Color(0xff38bdf8), // Glacial cyan-blue
+        secondary: const Color(0xff94a3b8), // Subdued slate
+        onSurface: dark ? const Color(0xfff1f5f9) : const Color(0xff0f172a),
+        onSurfaceVariant: dark
+            ? const Color(0xff94a3b8)
+            : const Color(0xff475569),
+        outline: dark
+            ? const Color(0xff38bdf8).withValues(alpha: 0.22)
+            : const Color(0xff0284c7).withValues(alpha: 0.18),
+        error: const Color(0xfff43f5e),
+        highlight: const Color(0xff38bdf8).withValues(alpha: 0.16),
+        glow: const Color(0xff0284c7), // Calm polar glow
+        shadow: const Color(0xff060a0e).withValues(alpha: dark ? 0.70 : 0.12),
+        panelRadius: 20,
+        cardRadius: 14,
+        controlRadius: 12,
+        sidebarRadius: 20,
+        glassBlur: 16,
+        motionScale: 0.95,
+      );
+    }
+    if (theme == AppVisualTheme.obsidianSlate) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff090a0c) : const Color(0xfff4f5f6),
+        surface: dark
+            ? const Color(0xd9121417)
+            : Colors.white.withValues(alpha: 0.90),
+        surfaceDim: dark
+            ? const Color(0x990d0e11)
+            : const Color(0xb3e4e6ea),
+        surfaceBright: dark
+            ? const Color(0xff1b1e22)
+            : const Color(0xffffffff),
+        primary: const Color(0xff94a3b8), // Polished platinum slate
+        secondary: const Color(0xff64748b), // Deep graphite
+        onSurface: dark ? const Color(0xfff8fafc) : const Color(0xff0f172a),
+        onSurfaceVariant: dark
+            ? const Color(0xffcbd5e1)
+            : const Color(0xff475569),
+        outline: dark
+            ? const Color(0xff94a3b8).withValues(alpha: 0.20)
+            : const Color(0xff475569).withValues(alpha: 0.16),
+        error: const Color(0xffef4444),
+        highlight: const Color(0xffcbd5e1).withValues(alpha: 0.14),
+        glow: const Color(0xff64748b), // Steady architectural ambient
+        shadow: Colors.black.withValues(alpha: dark ? 0.85 : 0.10),
+        panelRadius: 16,
+        cardRadius: 12,
+        controlRadius: 10,
+        sidebarRadius: 18,
+        glassBlur: 12,
+        motionScale: 0.90,
+      );
+    }
+    if (theme == AppVisualTheme.tokyoExecutive) {
+      return AppPalette(
+        visualTheme: theme,
+        isDark: dark,
+        background: dark ? const Color(0xff060b14) : const Color(0xfff3f6fa),
+        surface: dark
+            ? const Color(0xcc0c1524)
+            : Colors.white.withValues(alpha: 0.86),
+        surfaceDim: dark
+            ? const Color(0x80080e18)
+            : const Color(0xb3e2e8f2),
+        surfaceBright: dark
+            ? const Color(0xff122036)
+            : const Color(0xffffffff),
+        primary: const Color(0xff2563eb), // Deep commanding sapphire
+        secondary: const Color(0xffd4af37), // Subtle brushed champagne gold
+        onSurface: dark ? const Color(0xfff8fafc) : const Color(0xff0c192c),
+        onSurfaceVariant: dark
+            ? const Color(0xff93c5fd)
+            : const Color(0xff334155),
+        outline: dark
+            ? const Color(0xff3b82f6).withValues(alpha: 0.22)
+            : const Color(0xff1d4ed8).withValues(alpha: 0.18),
+        error: const Color(0xffe11d48),
+        highlight: const Color(0xff2563eb).withValues(alpha: 0.18),
+        glow: const Color(0xff1d4ed8), // Corporate composure aura
+        shadow: const Color(0xff03060c).withValues(alpha: dark ? 0.78 : 0.12),
+        panelRadius: 22,
+        cardRadius: 15,
+        controlRadius: 13,
+        sidebarRadius: 22,
+        glassBlur: 16,
+        motionScale: 0.95,
       );
     }
     return AppPalette(
@@ -958,7 +1102,10 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
             p.isCyberpunkOled ||
             p.isSynthwave80s ||
             p.isMatrixPhosphor ||
-            p.isSolarFlare) &&
+            p.isSolarFlare ||
+            p.isNordicFrost ||
+            p.isObsidianSlate ||
+            p.isTokyoExecutive) &&
         !reducedMotion;
     if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
@@ -1016,6 +1163,41 @@ class _ThemedBackdropState extends State<ThemedBackdrop>
                       p.background,
                     ],
                     stops: const [0, 0.25, 0.55, 0.80, 1],
+                  )
+                : p.isNordicFrost
+                ? RadialGradient(
+                    center: alignmentA,
+                    radius: 1.20,
+                    colors: [
+                      const Color(0xff38bdf8).withValues(alpha: p.isDark ? 0.08 : 0.05),
+                      const Color(0xff0284c7).withValues(alpha: p.isDark ? 0.05 : 0.03),
+                      p.background,
+                    ],
+                    stops: const [0, 0.50, 1],
+                  )
+                : p.isObsidianSlate
+                ? LinearGradient(
+                    begin: alignmentA,
+                    end: alignmentB,
+                    colors: [
+                      p.background,
+                      const Color(0xff1e232a).withValues(alpha: p.isDark ? 0.40 : 0.08),
+                      const Color(0xff121519).withValues(alpha: p.isDark ? 0.60 : 0.12),
+                      p.background,
+                    ],
+                    stops: const [0, 0.35, 0.70, 1],
+                  )
+                : p.isTokyoExecutive
+                ? LinearGradient(
+                    begin: alignmentA,
+                    end: alignmentB,
+                    colors: [
+                      p.background,
+                      const Color(0xff172554).withValues(alpha: p.isDark ? 0.45 : 0.08),
+                      const Color(0xff1e3a8a).withValues(alpha: p.isDark ? 0.30 : 0.06),
+                      p.background,
+                    ],
+                    stops: const [0, 0.30, 0.65, 1],
                   )
                 : p.isCyberpunkOled
                 ? RadialGradient(

@@ -40,6 +40,27 @@ void main() {
     final pSolar = AppPalette.fromBrightness(true, visualTheme: solar);
     expect(pSolar.isSolarFlare, isTrue);
     expect(pSolar.primary, equals(const Color(0xffff5e00)));
+
+    // Nordic Frost (Professional Calm)
+    final nordic = appVisualThemeFromKey('nordic-frost');
+    expect(nordic, equals(AppVisualTheme.nordicFrost));
+    final pNordic = AppPalette.fromBrightness(true, visualTheme: nordic);
+    expect(pNordic.isNordicFrost, isTrue);
+    expect(pNordic.primary, equals(const Color(0xff38bdf8)));
+
+    // Obsidian Slate (Professional Strong Dark)
+    final obsidian = appVisualThemeFromKey('obsidian-slate');
+    expect(obsidian, equals(AppVisualTheme.obsidianSlate));
+    final pObsidian = AppPalette.fromBrightness(true, visualTheme: obsidian);
+    expect(pObsidian.isObsidianSlate, isTrue);
+    expect(pObsidian.primary, equals(const Color(0xff94a3b8)));
+
+    // Tokyo Executive (Professional Sapphire & Champagne)
+    final tokyo = appVisualThemeFromKey('tokyo-executive');
+    expect(tokyo, equals(AppVisualTheme.tokyoExecutive));
+    final pTokyo = AppPalette.fromBrightness(true, visualTheme: tokyo);
+    expect(pTokyo.isTokyoExecutive, isTrue);
+    expect(pTokyo.primary, equals(const Color(0xff2563eb)));
   });
 
   test('Voice personas list count and default', () {

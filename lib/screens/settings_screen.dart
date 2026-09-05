@@ -72,11 +72,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String text;
     Color color;
     if (category == 'General') {
-      text = app.visualTheme == 'cyberpunk-oled'
-          ? 'Cyberpunk'
-          : (app.visualTheme == 'liquid-glass'
-              ? 'Liquid Glass'
-              : (app.visualTheme == 'aurora-neon' ? 'Aurora' : (app.isDark ? 'Dark' : 'Light')));
+      text = switch (app.visualTheme) {
+        'cyberpunk-oled' => 'Cyberpunk',
+        'liquid-glass' => 'Liquid Glass',
+        'aurora-neon' => 'Aurora',
+        'synthwave-80s' => 'Synthwave',
+        'matrix-phosphor' => 'Matrix',
+        'solar-flare' => 'Solar Flare',
+        'nordic-frost' => 'Nordic',
+        'obsidian-slate' => 'Obsidian',
+        'tokyo-executive' => 'Tokyo',
+        _ => app.isDark ? 'Dark' : 'Light',
+      };
       color = p.primary;
     } else if (category == 'AI & Generation') {
       final memCount = app.activeMemories.length;
@@ -122,8 +129,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final query = _searchQuery.toLowerCase().trim();
     final items = <Widget>[];
 
-    if ('general profile name display language theme visual dark sound haptics'.contains(query) ||
-        'profil nama bahasa tema suara getar'.contains(query)) {
+    if ('general profile name display language theme visual dark sound haptics nordic frost obsidian slate tokyo executive minimalist'.contains(query) ||
+        'profil nama bahasa tema visual tenang profesional kuat'.contains(query)) {
       items.add(_ProfileSection(copy: copy));
       items.add(const SizedBox(height: 18));
       items.add(const _ExperienceSection());
@@ -1164,6 +1171,27 @@ class _ThemeOptionTileState extends State<_ThemeOptionTile> {
           const Color(0xffff5e00), // Plasma fire orange
           const Color(0xffffc400), // Solar gold
           const Color(0xffff3300), // Corona crimson
+        ],
+      'nordic-frost' => [
+          const Color(0xff0b1016), // Polar night deep slate
+          const Color(0xff131d27), // Glacial surface
+          const Color(0xff38bdf8), // Crisp sub-zero cyan
+          const Color(0xff94a3b8), // Frost mist slate
+          const Color(0xfff1f5f9), // Glacial ice white
+        ],
+      'obsidian-slate' => [
+          const Color(0xff090a0c), // Architectural obsidian
+          const Color(0xff121417), // Deep granite card
+          const Color(0xff94a3b8), // Polished platinum
+          const Color(0xff64748b), // Slate anchor
+          const Color(0xfff8fafc), // Crisp white
+        ],
+      'tokyo-executive' => [
+          const Color(0xff060b14), // Midnight Tokyo blue
+          const Color(0xff0c1524), // Executive navy surface
+          const Color(0xff2563eb), // Commanding sapphire
+          const Color(0xffd4af37), // Champagne gold
+          const Color(0xfff8fafc), // Crisp composure
         ],
       _ => [
           const Color(0xff000000),
