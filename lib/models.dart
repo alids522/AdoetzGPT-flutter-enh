@@ -1397,13 +1397,17 @@ class Memory {
   factory Memory.fromJson(Map<String, dynamic> json) {
     final content = stringValue(json['content']);
     final timestamp = intValue(json['timestamp']);
+    final rawKey = stringValue(json['key']);
+    final canonicalKey = MemoryCanonicalKeys.normalize(
+      rawKey.isNotEmpty ? rawKey : MemoryCanonicalKeys.inferFromContent(content),
+    );
     return Memory(
       id: stringValue(json['id']),
       content: content,
       timestamp: timestamp,
       updatedAt: json['updatedAt'] != null ? intValue(json['updatedAt']) : timestamp,
       deletedAt: json['deletedAt'] != null ? intValue(json['deletedAt']) : null,
-      key: stringValue(json['key'], inferKey(content)),
+      key: canonicalKey,
       type: stringValue(json['type'], 'preference'),
       scope: stringValue(json['scope'], 'global'),
       sensitivity: stringValue(json['sensitivity'], 'low'),
@@ -1422,37 +1426,150 @@ class Memory {
     if (sensitivity.isNotEmpty) 'sensitivity': sensitivity,
   };
 
-  static String inferKey(String content) {
+  static String inferKey(String content) => MemoryCanonicalKeys.inferFromContent(content);
+}
+
+class MemoryCanonicalKeys {
+  // Core user identity
+  static const String userName = 'user.name';
+  static const String userNickname = 'user.nickname';
+  static const String userLocation = 'user.location';
+  static const String userOccupation = 'user.occupation';
+  static const String userPets = 'user.pets';
+
+  // Communication style & tone
+  static const String prefLanguage = 'pref.language';
+  static const String prefTone = 'pref.tone';
+  static const String prefVerbosity = 'pref.verbosity';
+
+  // Technical preferences
+  static const String prefFramework = 'pref.framework';
+  static const String prefLanguageTech = 'pref.tech_language';
+  static const String prefUiDesign = 'pref.ui_design';
+
+  // Project memories
+  static const String projectCurrent = 'project.current';
+  static const String projectRequirement = 'project.requirement';
+
+  static const String topicPrefix = 'topic.';
+
+  /// Canonicalizes legacy or raw keys into the standard taxonomy.
+  static String normalize(String rawKey) {
+    final key = rawKey.trim().toLowerCase();
+    if (key.isEmpty || key == 'none' || key == 'user_defined') return '';
+
+    // Legacy mappings
+    if (key == 'user_name' || key == 'name') return userName;
+    if (key == 'nickname') return userNickname;
+    if (key == 'pets' || key == 'pet') return userPets;
+    if (key == 'preferred_language' || key == 'language') return prefLanguage;
+    if (key == 'preferred_tone' || key == 'tone') return prefTone;
+    if (key == 'preferred_framework' || key == 'preferred_mobile_framework' || key == 'framework') {
+      return prefFramework;
+    }
+    if (key == 'ui_preference' || key == 'ui_design') return prefUiDesign;
+    if (key == 'project_requirement' || key.startsWith('project_requirement_') || key.endsWith('_requirement')) {
+      return projectRequirement;
+    }
+    if (key == 'current_project' || key.startsWith('project_')) return projectCurrent;
+
+    // Strips random timestamped manual prefixes
+    if (key.startsWith('manual_memory_') || key.startsWith('custom_memory_')) {
+      return '';
+    }
+
+    // Custom topic keys
+    if (key.startsWith('topic.')) return key;
+    if (key.startsWith('topic_')) return 'topic.${key.substring(6)}';
+    if (key.startsWith('custom_')) return 'topic.$key';
+
+    return key;
+  }
+
+  /// Infers canonical key from text (Indonesian + English).
+  static String inferFromContent(String content) {
     final value = content
         .toLowerCase()
         .replaceAll(RegExp(r'[^\w\s-]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    if (value.contains('name is') || value.contains('named')) {
-      return 'user_name';
+
+    // User name
+    if (value.contains('name is') ||
+        value.contains('named') ||
+        value.contains('nama saya') ||
+        value.contains('nama aku') ||
+        value.contains('namaku')) {
+      return userName;
     }
-    if (value.contains('nickname') || value.contains('call user')) {
-      return 'nickname';
+
+    // Nickname
+    if (value.contains('nickname') ||
+        value.contains('call user') ||
+        value.contains('call me') ||
+        value.contains('panggil aku') ||
+        value.contains('panggil saya') ||
+        value.contains('panggilan')) {
+      return userNickname;
     }
-    if (RegExp(r'\b(dog|dogs|cat|cats|pet|pets)\b').hasMatch(value)) {
-      return 'pets';
+
+    // Location
+    if (value.contains('live in') ||
+        value.contains('lives in') ||
+        value.contains('based in') ||
+        value.contains('tinggal di') ||
+        value.contains('domisili')) {
+      return userLocation;
     }
-    if (value.contains('language') || value.contains('indonesian')) {
-      return 'preferred_language';
+
+    // Occupation
+    if (value.contains('work as') ||
+        value.contains('works as') ||
+        value.contains('bekerja sebagai') ||
+        value.contains('kerja di') ||
+        value.contains('profesi')) {
+      return userOccupation;
     }
+
+    // Pets
+    if (RegExp(r'\b(dog|dogs|cat|cats|pet|pets|kucing|anjing|hewan peliharaan)\b').hasMatch(value)) {
+      return userPets;
+    }
+
+    // Language
+    if (value.contains('language') ||
+        value.contains('indonesian') ||
+        value.contains('bahasa indonesia') ||
+        value.contains('bahasa inggris') ||
+        value.contains('english')) {
+      return prefLanguage;
+    }
+
+    // Tone & verbosity
     if (value.contains('tone') ||
         value.contains('verbose') ||
-        value.contains('concise')) {
-      return 'preferred_tone';
+        value.contains('concise') ||
+        value.contains('singkat') ||
+        value.contains('santai') ||
+        value.contains('bertele tele') ||
+        value.contains('to the point')) {
+      return prefTone;
     }
+
+    // Tech stack
     if (value.contains('framework') ||
-        (value.contains('prefer') &&
-            (value.contains('flutter') || value.contains('react')))) {
-      return 'preferred_framework';
+        RegExp(r'\b(flutter|react|vue|svelte|angular|kotlin|swift|dart|python)\b').hasMatch(value)) {
+      return prefFramework;
     }
-    if (value.contains('project') || value.contains('app')) {
-      return 'project_requirement';
+
+    // Project
+    if (value.contains('project') || value.contains('proyek') || value.contains('aplikasi yang dibangun')) {
+      return projectCurrent;
     }
+    if (value.contains('requirement') || value.contains('kebutuhan proyek')) {
+      return projectRequirement;
+    }
+
     return '';
   }
 }

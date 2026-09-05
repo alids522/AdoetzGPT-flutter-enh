@@ -12,6 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models.dart';
+import '../translations.dart';
 import '../services/ai_service.dart';
 import '../services/gemini_live_service.dart';
 import '../services/live_foreground_service.dart';
@@ -21,6 +22,20 @@ import '../services/sync_service.dart';
 import '../services/mcp_service.dart';
 
 const _idGenerator = Uuid();
+
+class MemoryEventNotification {
+  const MemoryEventNotification({
+    required this.action,
+    required this.key,
+    required this.content,
+    required this.timestamp,
+  });
+
+  final String action; // 'saved', 'updated', 'deleted'
+  final String key;
+  final String content;
+  final int timestamp;
+}
 
 class AdoetzAppState extends ChangeNotifier {
   AdoetzAppState({StorageService? storage, SyncService? sync, AiService? ai, this.mcpService})
@@ -79,6 +94,7 @@ class AdoetzAppState extends ChangeNotifier {
 
   AppView currentView = AppView.chat;
   AppLanguage language = AppLanguage.id;
+  UiCopy get copy => UiCopy(language);
   String theme = 'dark';
   String visualTheme = 'default';
   String selectedModel = 'gemini-2.5-flash';
@@ -107,6 +123,11 @@ class AdoetzAppState extends ChangeNotifier {
   String currentSessionId = '';
   List<Memory> memories = const [];
   List<Memory> get activeMemories => memories.where((m) => m.deletedAt == null).toList();
+  MemoryEventNotification? lastMemoryNotification;
+  void clearMemoryNotification() {
+    lastMemoryNotification = null;
+    notifyListeners();
+  }
   List<TokenUsageRecord> tokenUsageData = const [];
   List<CustomCounter> customCounters = const [];
   Map<String, int> modelContextOverrides = const {};
@@ -450,11 +471,11 @@ class AdoetzAppState extends ChangeNotifier {
 
     final memoryMap = <String, Memory>{};
     for (final memory in local.memories) {
-      final mKey = memory.key.isNotEmpty ? 'semantic_${memory.key}' : 'id_${memory.id}';
+      final mKey = _canonicalMemoryMergeKey(memory);
       memoryMap[mKey] = memory;
     }
     for (final memory in remote.memories) {
-      final mKey = memory.key.isNotEmpty ? 'semantic_${memory.key}' : 'id_${memory.id}';
+      final mKey = _canonicalMemoryMergeKey(memory);
       final existing = memoryMap[mKey];
       if (existing == null) {
         memoryMap[mKey] = memory;
@@ -1764,10 +1785,13 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void updateMemory(String id, String content) {
+    final clean = content.trim();
+    if (clean.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
     memories = memories
         .map(
           (memory) =>
-              memory.id == id ? memory.copyWith(content: content, updatedAt: DateTime.now().millisecondsSinceEpoch) : memory,
+              memory.id == id ? memory.copyWith(content: clean, updatedAt: now) : memory,
         )
         .toList();
     notifyListeners();
@@ -1775,29 +1799,29 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void deleteMemory(String id) {
-    memories = memories.map((memory) => memory.id == id ? memory.copyWith(deletedAt: DateTime.now().millisecondsSinceEpoch, updatedAt: DateTime.now().millisecondsSinceEpoch) : memory).toList();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    Memory? target;
+    for (final m in memories) {
+      if (m.id == id) {
+        target = m;
+        break;
+      }
+    }
+    memories = memories.map((memory) => memory.id == id ? memory.copyWith(deletedAt: now, updatedAt: now) : memory).toList();
+    if (target != null) {
+      lastMemoryNotification = MemoryEventNotification(
+        action: 'deleted',
+        key: target.key,
+        content: target.content,
+        timestamp: now,
+      );
+    }
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
 
   void addMemory(String content) {
-    if (content.trim().isEmpty) return;
-    final clean = content.trim();
-    if (_isDuplicateMemory(clean)) return;
-    
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final memory = Memory(
-      id: '$now-${memories.length}',
-      content: clean,
-      timestamp: now,
-      updatedAt: now,
-      key: 'manual_memory_$now',
-      type: 'user_defined',
-      scope: 'global',
-    );
-    memories = [memory, ...memories];
-    notifyListeners();
-    unawaited(_persistAndScheduleRemote());
+    saveMemory(content);
   }
 
   Memory? saveMemory(
@@ -1806,24 +1830,34 @@ class AdoetzAppState extends ChangeNotifier {
     String type = 'preference',
     String scope = 'global',
     String sensitivity = 'low',
+    bool notifyUser = false,
   }) {
     final clean = content.trim();
-    if (clean.isEmpty || _isDuplicateMemory(clean)) return null;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final memory = Memory(
-      id: now.toString(),
-      content: clean,
-      timestamp: now,
-      updatedAt: now,
-      key: key.isEmpty ? Memory.inferKey(clean) : key,
+    if (clean.isEmpty) return null;
+
+    final canonicalKey = MemoryCanonicalKeys.normalize(key).isNotEmpty
+        ? MemoryCanonicalKeys.normalize(key)
+        : MemoryCanonicalKeys.inferFromContent(clean);
+
+    final action = MemoryAgentAction(
+      action: 'save',
       type: type,
+      key: canonicalKey.isNotEmpty ? canonicalKey : key,
+      value: clean,
       scope: scope,
+      confidence: 1.0,
       sensitivity: sensitivity,
+      reason: 'User explicitly created or updated memory.',
     );
-    memories = [memory, ...memories];
-    notifyListeners();
-    unawaited(_persistAndScheduleRemote());
-    return memory;
+
+    _applyMemoryActions([action], forceNotify: notifyUser);
+    final normClean = _normalizeMemory(clean);
+    for (final m in memories) {
+      if (_normalizeMemory(m.content) == normClean) {
+        return m;
+      }
+    }
+    return null;
   }
 
   bool isSessionGenerating(String sessionId) => generatingSessionIds.contains(sessionId);
@@ -3661,26 +3695,50 @@ class AdoetzAppState extends ChangeNotifier {
     return value.startsWith('Gemini Live') ? value : 'Gemini Live: $value';
   }
 
+  String _lastProcessedLiveUserText = '';
+  int _lastProcessedLiveUserTime = 0;
+
   void _maybeSaveUserMemory(String text) {
     if (!genSettings.memoryEnabled) return;
+    final clean = text.trim();
+    if (clean.isEmpty) return;
+
+    // Debounce duplicate events (especially from Gemini Live stream finishing)
+    final normalized = _normalizeMemory(clean);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (normalized == _lastProcessedLiveUserText && (now - _lastProcessedLiveUserTime) < 4000) {
+      return;
+    }
+    _lastProcessedLiveUserText = normalized;
+    _lastProcessedLiveUserTime = now;
+
     final actions = const MemoryAgent().analyze(
-      message: text,
+      message: clean,
       existingMemories: memories,
     );
     _applyMemoryActions(actions);
   }
 
-  void _applyMemoryActions(List<MemoryAgentAction> actions) {
+  void _applyMemoryActions(List<MemoryAgentAction> actions, {bool forceNotify = false}) {
     var next = [...memories];
     var changed = false;
+    MemoryEventNotification? lastEvt;
+
     for (final action in actions) {
       if (action.action == 'ignore') continue;
+      final now = DateTime.now().millisecondsSinceEpoch;
+
       if (action.action == 'delete') {
         var didDelete = false;
-        final now = DateTime.now().millisecondsSinceEpoch;
         next = next.map((memory) {
           if (_memoryMatchesKey(memory, action.key) && memory.deletedAt == null) {
             didDelete = true;
+            lastEvt = MemoryEventNotification(
+              action: 'deleted',
+              key: action.key,
+              content: memory.content,
+              timestamp: now,
+            );
             return memory.copyWith(deletedAt: now, updatedAt: now);
           }
           return memory;
@@ -3688,28 +3746,36 @@ class AdoetzAppState extends ChangeNotifier {
         changed = changed || didDelete;
         continue;
       }
-      if (!action.applies || action.value.trim().isEmpty) continue;
 
+      if (!action.applies || action.value.trim().isEmpty) continue;
       final clean = action.value.trim();
+      final canonicalKey = MemoryCanonicalKeys.normalize(action.key).isNotEmpty
+          ? MemoryCanonicalKeys.normalize(action.key)
+          : action.key;
+
       final existingIndex = next.indexWhere(
         (memory) =>
-            _memoryMatchesKey(memory, action.key) ||
+            _memoryMatchesKey(memory, canonicalKey) ||
             _normalizeMemory(memory.content) == _normalizeMemory(clean),
       );
-      final now = DateTime.now().millisecondsSinceEpoch;
+
       if (existingIndex == -1) {
-        next.insert(
-          0,
-          Memory(
-            id: '$now-${next.length}',
-            content: clean,
-            timestamp: now,
-            updatedAt: now,
-            key: action.key,
-            type: action.type,
-            scope: action.scope,
-            sensitivity: action.sensitivity,
-          ),
+        final newMemory = Memory(
+          id: '$now-${next.length}',
+          content: clean,
+          timestamp: now,
+          updatedAt: now,
+          key: canonicalKey,
+          type: action.type,
+          scope: action.scope,
+          sensitivity: action.sensitivity,
+        );
+        next.insert(0, newMemory);
+        lastEvt = MemoryEventNotification(
+          action: 'saved',
+          key: canonicalKey,
+          content: clean,
+          timestamp: now,
         );
         changed = true;
         continue;
@@ -3719,7 +3785,7 @@ class AdoetzAppState extends ChangeNotifier {
       final isSoftDeleted = existing.deletedAt != null;
       if (isSoftDeleted ||
           existing.content != clean ||
-          existing.key != action.key ||
+          existing.key != canonicalKey ||
           existing.type != action.type ||
           existing.scope != action.scope ||
           existing.sensitivity != action.sensitivity) {
@@ -3727,43 +3793,54 @@ class AdoetzAppState extends ChangeNotifier {
           content: clean,
           timestamp: now,
           updatedAt: now,
-          key: action.key,
+          key: canonicalKey,
           type: action.type,
           scope: action.scope,
           sensitivity: action.sensitivity,
           clearDeletedAt: true,
+        );
+        lastEvt = MemoryEventNotification(
+          action: isSoftDeleted ? 'saved' : 'updated',
+          key: canonicalKey,
+          content: clean,
+          timestamp: now,
         );
         changed = true;
       }
     }
 
     if (!changed) return;
-    next.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    next.sort((a, b) => (b.updatedAt ?? b.timestamp).compareTo(a.updatedAt ?? a.timestamp));
     memories = next;
+    if (lastEvt != null) {
+      lastMemoryNotification = lastEvt;
+    }
     notifyListeners();
     unawaited(_persistAndScheduleRemote());
   }
 
-  bool _isDuplicateMemory(String content) {
-    final normalized = _normalizeMemory(content);
-    final key = Memory.inferKey(content);
-    return memories.any((memory) {
-      if (_normalizeMemory(memory.content) == normalized) return true;
-      return key.isNotEmpty && _memoryMatchesKey(memory, key);
-    });
-  }
-
-  bool _memoryMatchesKey(Memory memory, String key) {
-    if (key.isEmpty || key == 'none') return false;
-    final memoryKey = memory.key.isNotEmpty
-        ? memory.key
-        : Memory.inferKey(memory.content);
-    if (memoryKey == key) return true;
-    if (key == 'preferred_framework' &&
-        memoryKey == 'preferred_mobile_framework') {
+  bool _memoryMatchesKey(Memory memory, String targetKey) {
+    if (targetKey.isEmpty || targetKey == 'none') return false;
+    final canonicalTarget = MemoryCanonicalKeys.normalize(targetKey);
+    final memoryCanonical = MemoryCanonicalKeys.normalize(
+      memory.key.isNotEmpty ? memory.key : Memory.inferKey(memory.content),
+    );
+    if (canonicalTarget.isNotEmpty && memoryCanonical == canonicalTarget) {
       return true;
     }
-    return false;
+    return memory.key.isNotEmpty && memory.key == targetKey;
+  }
+
+  String _canonicalMemoryMergeKey(Memory memory) {
+    final canonical = MemoryCanonicalKeys.normalize(memory.key);
+    if (canonical.isNotEmpty) {
+      return 'key:$canonical';
+    }
+    final inferred = MemoryCanonicalKeys.inferFromContent(memory.content);
+    if (inferred.isNotEmpty) {
+      return 'inferred:$inferred';
+    }
+    return 'content:${_normalizeMemory(memory.content)}';
   }
 
   String _normalizeMemory(String content) => content

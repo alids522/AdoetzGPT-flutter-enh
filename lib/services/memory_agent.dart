@@ -83,19 +83,20 @@ class MemoryAgent {
   ) {
     final actions = <MemoryAgentAction>[];
 
+    // User Name: EN & ID
     final name = _firstMatch(clean, [
-      RegExp(
-        r"\bmy name is\s+([A-Za-z][A-Za-z0-9 _-]{1,40})",
-        caseSensitive: false,
-      ),
+      RegExp(r"\bmy name is\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
       RegExp(r"\bi am\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
       RegExp(r"\bi'm\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bnama saya\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bnama aku\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bnamaku\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
     ]);
     if (name != null && !_looksLikeActivity(name)) {
       final pretty = _titleName(name);
       actions.add(
         _upsert(
-          key: 'user_name',
+          key: MemoryCanonicalKeys.userName,
           type: 'personal_fact',
           value: "User's name is $pretty.",
           scope: 'global',
@@ -106,20 +107,19 @@ class MemoryAgent {
       );
     }
 
+    // Nickname / Call name: EN & ID
     final nickname = _firstMatch(clean, [
-      RegExp(
-        r"\bcall me\s+([A-Za-z][A-Za-z0-9 _-]{1,40})",
-        caseSensitive: false,
-      ),
-      RegExp(
-        r"\byou can call me\s+([A-Za-z][A-Za-z0-9 _-]{1,40})",
-        caseSensitive: false,
-      ),
+      RegExp(r"\bcall me\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\byou can call me\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bpanggil aku\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bpanggil saya\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bpanggil aja\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
+      RegExp(r"\bbisa panggil (?:aku|saya|gue)\s+([A-Za-z][A-Za-z0-9 _-]{1,40})", caseSensitive: false),
     ]);
     if (nickname != null && !_looksLikeActivity(nickname)) {
       actions.add(
         _upsert(
-          key: 'nickname',
+          key: MemoryCanonicalKeys.userNickname,
           type: 'personal_fact',
           value: 'User likes to be called ${_titleName(nickname)}.',
           scope: 'global',
@@ -130,22 +130,51 @@ class MemoryAgent {
       );
     }
 
-    final pet = RegExp(
+    // Location / Residence: EN & ID
+    final location = _firstMatch(clean, [
+      RegExp(r"\b(?:i live in|i am based in|i reside in)\s+([A-Za-z\s]{2,40})", caseSensitive: false),
+      RegExp(r"\b(?:aku|saya|gue)\s+tinggal di\s+([A-Za-z\s]{2,40})", caseSensitive: false),
+      RegExp(r"\bdomisili (?:saya|aku|di)?\s*([A-Za-z\s]{2,40})", caseSensitive: false),
+    ]);
+    if (location != null && !_looksLikeActivity(location)) {
+      final prettyLoc = _titleName(location);
+      actions.add(
+        _upsert(
+          key: MemoryCanonicalKeys.userLocation,
+          type: 'personal_fact',
+          value: 'User lives in $prettyLoc.',
+          scope: 'global',
+          confidence: 0.95,
+          existing: existing,
+          reason: 'The user explicitly stated their location.',
+        ),
+      );
+    }
+
+    // Pets: EN & ID
+    final petEn = RegExp(
       r"\b(?:actually\s+)?i\s+(?:have|own)\s+([0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(dog|dogs|cat|cats|bird|birds|fish|pets)\b",
       caseSensitive: false,
     ).firstMatch(clean);
-    if (pet != null && !_temporaryAnimalMention(normalized)) {
-      final count = _numberWordToDigit(pet.group(1)!);
-      final animal = _pluralizePet(pet.group(2)!, count);
+    final petId = RegExp(
+      r"\b(?:aku|saya|gue)\s+(?:punya|memelihara)\s+([0-9]+|satu|dua|tiga|empat|lima)\s+(?:ekor\s+)?(kucing|anjing|burung|ikan|kelinci|hewan peliharaan)\b",
+      caseSensitive: false,
+    ).firstMatch(clean);
+
+    if ((petEn != null || petId != null) && !_temporaryAnimalMention(normalized)) {
+      final countWord = petEn != null ? petEn.group(1)! : petId!.group(1)!;
+      final rawAnimal = petEn != null ? petEn.group(2)! : petId!.group(2)!;
+      final count = _numberWordToDigit(countWord);
+      final animal = _pluralizePet(rawAnimal, count);
       actions.add(
         _upsert(
-          key: 'pets',
+          key: MemoryCanonicalKeys.userPets,
           type: 'personal_fact',
           value: 'User has $count $animal.',
           scope: 'global',
           confidence: 1.0,
           existing: existing,
-          reason: 'The user explicitly stated a stable pet fact.',
+          reason: 'The user explicitly stated a pet fact.',
         ),
       );
     }
@@ -161,13 +190,18 @@ class MemoryAgent {
   ) {
     final actions = <MemoryAgentAction>[];
 
+    // Language preference
     if (RegExp(
       r'\b(?:prefer|usually want|want|use)\s+(?:casual\s+)?(?:bahasa\s+)?indonesian\b',
       caseSensitive: false,
-    ).hasMatch(clean)) {
+    ).hasMatch(clean) ||
+        RegExp(
+          r'\b(?:lebih suka|pake|pakai|gunakan|prefer)\s+bahasa\s+indonesia\b',
+          caseSensitive: false,
+        ).hasMatch(clean)) {
       actions.add(
         _upsert(
-          key: 'preferred_language',
+          key: MemoryCanonicalKeys.prefLanguage,
           type: 'communication_style',
           value: 'User prefers Indonesian when appropriate.',
           scope: 'global',
@@ -176,20 +210,44 @@ class MemoryAgent {
           reason: 'The user clearly stated a language preference.',
         ),
       );
+    } else if (RegExp(
+      r'\b(?:prefer|respond in|speak in)\s+english\b',
+      caseSensitive: false,
+    ).hasMatch(clean) ||
+        RegExp(
+          r'\b(?:lebih suka|pake|pakai|gunakan|prefer)\s+bahasa\s+inggris\b',
+          caseSensitive: false,
+        ).hasMatch(clean)) {
+      actions.add(
+        _upsert(
+          key: MemoryCanonicalKeys.prefLanguage,
+          type: 'communication_style',
+          value: 'User prefers English.',
+          scope: 'global',
+          confidence: 0.9,
+          existing: existing,
+          reason: 'The user clearly stated an English language preference.',
+        ),
+      );
     }
 
+    // Tone & conciseness (EN & ID)
     if (lower.contains('hate verbose') ||
         lower.contains('not verbose') ||
         lower.contains('less verbose') ||
         lower.contains('concise answer') ||
         lower.contains('keep it concise') ||
-        lower.contains('short answer')) {
+        lower.contains('short answer') ||
+        lower.contains('jangan bertele-tele') ||
+        lower.contains('jangan bertele tele') ||
+        lower.contains('jangan panjang lebar') ||
+        lower.contains('jawab singkat') ||
+        lower.contains('to the point')) {
       actions.add(
         _upsert(
-          key: 'preferred_tone',
+          key: MemoryCanonicalKeys.prefTone,
           type: 'communication_style',
-          value:
-              'User prefers concise answers and dislikes unnecessary verbosity.',
+          value: 'User prefers concise answers and dislikes unnecessary verbosity.',
           scope: 'global',
           confidence: 0.9,
           existing: existing,
@@ -200,10 +258,14 @@ class MemoryAgent {
 
     if (lower.contains('casual indonesian') ||
         lower.contains('casual tone') ||
-        lower.contains('informal tone')) {
+        lower.contains('informal tone') ||
+        lower.contains('santai aja') ||
+        lower.contains('bahasa santai') ||
+        lower.contains('gaya santai') ||
+        lower.contains('ngomong santai')) {
       actions.add(
         _upsert(
-          key: 'preferred_tone',
+          key: MemoryCanonicalKeys.prefTone,
           type: 'communication_style',
           value: 'User prefers a casual tone when appropriate.',
           scope: 'global',
@@ -214,17 +276,17 @@ class MemoryAgent {
       );
     }
 
-    final framework = RegExp(
-      r'\bi\s+prefer\s+(flutter|react|vue|svelte|angular|kotlin|swift|dart)\b',
-      caseSensitive: false,
-    ).firstMatch(clean);
+    // Framework preferences (EN & ID)
+    final framework = _firstMatch(clean, [
+      RegExp(r'\bi\s+prefer\s+(flutter|react|vue|svelte|angular|kotlin|swift|dart|python)\b', caseSensitive: false),
+      RegExp(r'\b(?:aku|saya|gue)\s+(?:lebih suka|biasa pakai|prefer)(?:\s+pakai)?\s+(flutter|react|vue|svelte|angular|kotlin|swift|dart|python)\b', caseSensitive: false),
+      RegExp(r'\b(?:lebih suka|biasa pakai|prefer)(?:\s+pakai)?\s+(flutter|react|vue|svelte|angular|kotlin|swift|dart|python)\b', caseSensitive: false),
+    ]);
     if (framework != null) {
-      final value = _titleName(framework.group(1)!);
+      final value = _titleName(framework);
       actions.add(
         _upsert(
-          key: value.toLowerCase() == 'flutter'
-              ? 'preferred_mobile_framework'
-              : 'preferred_framework',
+          key: MemoryCanonicalKeys.prefFramework,
           type: 'preference',
           value: 'User prefers $value.',
           scope: 'global',
@@ -242,7 +304,7 @@ class MemoryAgent {
         lower.contains('preserve the ui')) {
       actions.add(
         _upsert(
-          key: 'ui_preference',
+          key: MemoryCanonicalKeys.prefUiDesign,
           type: 'preference',
           value: _uiPreferenceValue(lower),
           scope: 'global',
@@ -264,21 +326,18 @@ class MemoryAgent {
   ) {
     final actions = <MemoryAgentAction>[];
 
-    if (RegExp(
-      r"\bi\s+am\s+building\s+(?:an?\s+)?(.{3,90})",
-      caseSensitive: false,
-    ).hasMatch(clean)) {
-      final project = RegExp(
-        r"\bi\s+am\s+building\s+(?:an?\s+)?(.{3,90})",
-        caseSensitive: false,
-      ).firstMatch(clean)!.group(1)!;
-      final projKeyWords = _normalize(project).split(' ').where((w) => w.isNotEmpty).take(3).join('_');
-      final projKey = projKeyWords.isEmpty ? 'current_project' : 'project_$projKeyWords';
+    final projectMatch = _firstMatch(clean, [
+      RegExp(r"\bi\s+am\s+building\s+(?:an?\s+)?(.{3,90})", caseSensitive: false),
+      RegExp(r"\b(?:aku|saya)\s+sedang\s+(?:membuat|bikin|bangun)\s+(?:sebuah\s+)?(.{3,90})", caseSensitive: false),
+    ]);
+    if (projectMatch != null) {
+      final projKeyWords = _normalize(projectMatch).split(' ').where((w) => w.isNotEmpty).take(3).join('_');
+      final projKey = projKeyWords.isEmpty ? MemoryCanonicalKeys.projectCurrent : 'project_$projKeyWords';
       actions.add(
         _upsert(
           key: projKey,
           type: 'project_memory',
-          value: 'User is building ${_trimClause(project)}.',
+          value: 'User is building ${_trimClause(projectMatch)}.',
           scope: 'project',
           confidence: 0.9,
           existing: existing,
@@ -288,35 +347,20 @@ class MemoryAgent {
     }
 
     final projectRequirement = RegExp(
-      r'\b(?:for this app|for this project|this app must|this app should|the app must|the app should)\b(.{4,220})',
+      r'\b(?:for this app|for this project|this app must|this app should|the app must|the app should|aplikasi ini harus|proyek ini harus)\b(.{4,220})',
       caseSensitive: false,
     ).firstMatch(clean);
     if (projectRequirement != null) {
       final clause = _trimClause(projectRequirement.group(0)!);
       actions.add(
         _upsert(
-          key: _projectRequirementKey(clause),
+          key: MemoryCanonicalKeys.projectRequirement,
           type: 'project_memory',
           value: 'Project requirement: $clause.',
           scope: 'project',
           confidence: 0.85,
           existing: existing,
           reason: 'The user stated a stable project requirement.',
-        ),
-      );
-    }
-
-    if (lower.contains('openai-compatible endpoint') ||
-        lower.contains('openai compatible endpoint')) {
-      actions.add(
-        _upsert(
-          key: 'project_endpoint_requirement',
-          type: 'project_memory',
-          value: 'Project should support OpenAI-compatible endpoints.',
-          scope: 'project',
-          confidence: 0.9,
-          existing: existing,
-          reason: 'The user stated a stable app integration requirement.',
         ),
       );
     }
@@ -330,19 +374,24 @@ class MemoryAgent {
     String normalized,
     List<Memory> existing,
   ) {
-    final remember = RegExp(
-      r'\bremember(?: that)?\s+(.{3,220})',
-      caseSensitive: false,
-    ).firstMatch(clean);
+    final remember = _firstMatch(clean, [
+      RegExp(r'\bremember(?: that)?\s*[:,-]?\s+(.{3,220})', caseSensitive: false),
+      RegExp(r'\bplease remember\s*[:,-]?\s+(.{3,220})', caseSensitive: false),
+      RegExp(r'\bingat(?: bahwa)?\s*[:,-]?\s+(.{3,220})', caseSensitive: false),
+      RegExp(r'\btolong ingat\s*[:,-]?\s+(.{3,220})', caseSensitive: false),
+      RegExp(r'\bcatat(?: bahwa)?\s*[:,-]?\s+(.{3,220})', caseSensitive: false),
+      RegExp(r'\bjangan lupa (?:kalau|bahwa)?\s*[:,-]?\s+(.{3,220})', caseSensitive: false),
+    ]);
     if (remember == null) return const [];
 
-    final content = _trimClause(remember.group(1)!);
+    final content = _trimClause(remember);
     if (content.isEmpty ||
         _containsSecret(content) ||
         _containsHighSensitivity(content.toLowerCase())) {
       return const [];
     }
 
+    // Try sub-actions first so "Remember that my name is Adit" maps to user.name
     final nested = [
       ..._personalActions(content, _normalize(content), existing),
       ..._preferenceActions(
@@ -360,17 +409,18 @@ class MemoryAgent {
     ].where((item) => item.applies).toList();
     if (nested.isNotEmpty) return nested;
 
+    final key = _stableCustomKey(content);
     return [
       _upsert(
-        key: _stableCustomKey(content),
-        type:
-            content.toLowerCase().contains('app') ||
-                content.toLowerCase().contains('project')
+        key: key,
+        type: content.toLowerCase().contains('app') ||
+                content.toLowerCase().contains('project') ||
+                content.toLowerCase().contains('proyek') ||
+                content.toLowerCase().contains('aplikasi')
             ? 'project_memory'
             : 'preference',
         value: _memorySentence(content),
-        scope:
-            content.toLowerCase().contains('app') ||
+        scope: content.toLowerCase().contains('app') ||
                 content.toLowerCase().contains('project')
             ? 'project'
             : 'global',
@@ -387,7 +437,7 @@ class MemoryAgent {
     List<Memory> existing,
   ) {
     if (!RegExp(
-      r"\b(forget|delete|remove|don't remember|do not remember)\b",
+      r"\b(forget|delete|remove|don't remember|do not remember|lupakan|hapus memori|hapus ingatan|jangan ingat)\b",
       caseSensitive: false,
     ).hasMatch(clean)) {
       return null;
@@ -409,30 +459,35 @@ class MemoryAgent {
   }
 
   String _deleteKey(String normalized) {
-    if (RegExp(r'\b(dog|dogs|cat|cats|pet|pets)\b').hasMatch(normalized)) {
-      return 'pets';
+    if (RegExp(r'\b(dog|dogs|cat|cats|pet|pets|kucing|anjing|hewan)\b').hasMatch(normalized)) {
+      return MemoryCanonicalKeys.userPets;
     }
-    if (normalized.contains('name')) return 'user_name';
-    if (normalized.contains('nickname') || normalized.contains('call me')) {
-      return 'nickname';
+    if (normalized.contains('name') || normalized.contains('nama')) {
+      return MemoryCanonicalKeys.userName;
     }
-    if (normalized.contains('language') || normalized.contains('indonesian')) {
-      return 'preferred_language';
+    if (normalized.contains('nickname') ||
+        normalized.contains('call me') ||
+        normalized.contains('panggilan') ||
+        normalized.contains('panggil aku')) {
+      return MemoryCanonicalKeys.userNickname;
+    }
+    if (normalized.contains('location') || normalized.contains('tinggal') || normalized.contains('domisili')) {
+      return MemoryCanonicalKeys.userLocation;
+    }
+    if (normalized.contains('language') || normalized.contains('indonesian') || normalized.contains('bahasa')) {
+      return MemoryCanonicalKeys.prefLanguage;
     }
     if (normalized.contains('verbose') ||
         normalized.contains('tone') ||
-        normalized.contains('style')) {
-      return 'preferred_tone';
+        normalized.contains('style') ||
+        normalized.contains('santai') ||
+        normalized.contains('singkat')) {
+      return MemoryCanonicalKeys.prefTone;
     }
     if (normalized.contains('framework') ||
         normalized.contains('flutter') ||
         normalized.contains('react')) {
-      return 'preferred_framework';
-    }
-    if (normalized.contains('project') || normalized.contains('app')) {
-      // It is safer to let the user delete specific projects via the UI 
-      // rather than blindly deleting all project requirements.
-      return 'none';
+      return MemoryCanonicalKeys.prefFramework;
     }
     return 'none';
   }
@@ -446,11 +501,14 @@ class MemoryAgent {
     required List<Memory> existing,
     required String reason,
   }) {
-    final action = _hasExistingKey(existing, key) ? 'update' : 'save';
+    final canonicalKey = MemoryCanonicalKeys.normalize(key).isNotEmpty
+        ? MemoryCanonicalKeys.normalize(key)
+        : key;
+    final action = _hasExistingKey(existing, canonicalKey) ? 'update' : 'save';
     return MemoryAgentAction(
       action: action,
       type: type,
-      key: key,
+      key: canonicalKey,
       value: value,
       scope: scope,
       confidence: confidence,
@@ -460,11 +518,14 @@ class MemoryAgent {
   }
 
   bool _hasExistingKey(List<Memory> existing, String key) {
-    return existing.any((memory) => _memoryKey(memory) == key);
-  }
-
-  String _memoryKey(Memory memory) {
-    return memory.key.isNotEmpty ? memory.key : Memory.inferKey(memory.content);
+    final canonicalTarget = MemoryCanonicalKeys.normalize(key);
+    return existing.any((memory) {
+      if (memory.deletedAt != null) return false;
+      final mKey = MemoryCanonicalKeys.normalize(
+        memory.key.isNotEmpty ? memory.key : Memory.inferKey(memory.content),
+      );
+      return mKey == canonicalTarget;
+    });
   }
 
   MemoryAgentAction _ignore(String reason) {
@@ -482,14 +543,14 @@ class MemoryAgent {
 
   bool _containsSecret(String value) {
     return RegExp(
-      r'(api[_ -]?key\s*(?:is|=|:)|password\s*(?:is|=|:)|token\s*(?:is|=|:)|cookie\s*(?:is|=|:)|private[_ -]?key|bearer\s+[a-z0-9._-]{12,}|sk-[a-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})',
+      r'(api[_ -]?key\s*(?:is|=|:)|password\s*(?:is|=|:)|kata[_ -]?sandi\s*(?:is|=|:)|pin\s*(?:is|=|:)|token\s*(?:is|=|:)|cookie\s*(?:is|=|:)|private[_ -]?key|bearer\s+[a-z0-9._-]{12,}|sk-[a-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})',
       caseSensitive: false,
     ).hasMatch(value);
   }
 
   bool _containsHighSensitivity(String lower) {
     return RegExp(
-      r'\b(religion|political view|politics|diagnosed|diagnosis|disease|therapy|lawsuit|criminal|sexual|bank account|credit card|government id|passport|ssn|home address)\b',
+      r'\b(religion|political view|politics|diagnosed|diagnosis|disease|therapy|lawsuit|criminal|sexual|bank account|credit card|government id|passport|ssn|home address|nomor ktp|nik|nomor kk|kartu kredit|rekening bank|kata sandi|penyakit menular)\b',
     ).hasMatch(lower);
   }
 
@@ -563,6 +624,13 @@ class MemoryAgent {
       'really',
       'currently',
       'feeling',
+      'sedang',
+      'lagi',
+      'mencoba',
+      'membuat',
+      'bikin',
+      'bukan',
+      'mau',
     }.contains(first);
   }
 
@@ -570,7 +638,10 @@ class MemoryAgent {
     return normalized.contains('saw ') ||
         normalized.contains('today') ||
         normalized.contains('near my house') ||
-        normalized.contains('passed by');
+        normalized.contains('passed by') ||
+        normalized.contains('tadi ') ||
+        normalized.contains('melihat ') ||
+        normalized.contains('lewat ');
   }
 
   String _numberWordToDigit(String value) {
@@ -586,12 +657,21 @@ class MemoryAgent {
       'eight': '8',
       'nine': '9',
       'ten': '10',
+      'satu': '1',
+      'dua': '2',
+      'tiga': '3',
+      'empat': '4',
+      'lima': '5',
     };
     return words[lower] ?? value;
   }
 
   String _pluralizePet(String animal, String count) {
-    final singular = animal.toLowerCase().replaceAll(RegExp(r's$'), '');
+    final lower = animal.toLowerCase();
+    if (lower == 'kucing' || lower == 'anjing' || lower == 'burung' || lower == 'ikan' || lower == 'kelinci') {
+      return lower;
+    }
+    final singular = lower.replaceAll(RegExp(r's$'), '');
     return count == '1' ? singular : '${singular}s';
   }
 
@@ -604,23 +684,17 @@ class MemoryAgent {
     return 'User prefers lightweight UI design.';
   }
 
-  String _projectRequirementKey(String value) {
-    final normalized = _normalize(value);
-    if (normalized.contains('endpoint')) return 'project_endpoint_requirement';
-    if (normalized.contains('flutter')) return 'project_flutter_requirement';
-    if (normalized.contains('android')) return 'project_android_requirement';
-    if (normalized.contains('web')) return 'project_web_requirement';
-    if (normalized.contains('voice') || normalized.contains('live')) {
-      return 'project_live_voice_requirement';
-    }
-    return 'project_requirement';
-  }
-
   String _stableCustomKey(String value) {
-    final words = _normalize(
-      value,
-    ).split(' ').where((word) => word.length > 2).take(4).join('_');
-    return words.isEmpty ? 'custom_memory_${DateTime.now().millisecondsSinceEpoch}' : words;
+    final stopWords = {
+      'user', 'the', 'that', 'this', 'with', 'from', 'about', 'saya', 'aku',
+      'bahwa', 'untuk', 'dan', 'dengan', 'yang', 'pada', 'adalah',
+    };
+    final words = _normalize(value)
+        .split(' ')
+        .where((word) => word.length > 2 && !stopWords.contains(word))
+        .take(3)
+        .join('_');
+    return words.isEmpty ? 'topic.custom_${DateTime.now().millisecondsSinceEpoch}' : 'topic.$words';
   }
 
   String _memorySentence(String content) {
@@ -629,15 +703,16 @@ class MemoryAgent {
     if (trimmed.toLowerCase().startsWith('i ')) {
       return 'User ${trimmed.substring(2)}.';
     }
+    if (trimmed.toLowerCase().startsWith('saya ') || trimmed.toLowerCase().startsWith('aku ')) {
+      return 'User ${trimmed.replaceFirst(RegExp(r'^(?:saya|aku)\s+', caseSensitive: false), '')}.';
+    }
     return trimmed.endsWith('.') ? trimmed : '$trimmed.';
   }
 
   String _typeForKey(String key) {
-    if (key.startsWith('preferred')) return 'preference';
+    if (key.startsWith('pref.')) return 'preference';
     if (key.startsWith('project')) return 'project_memory';
-    if (key == 'nickname' || key == 'user_name' || key == 'pets') {
-      return 'personal_fact';
-    }
+    if (key.startsWith('user.')) return 'personal_fact';
     return 'ignore';
   }
 }

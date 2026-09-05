@@ -495,22 +495,23 @@ class _MemorySection extends StatelessWidget {
             title: const Text('Enable memory'),
             subtitle: Text(
               app.genSettings.memoryEnabled
-                  ? '${app.memories.length} saved memories can be used in chat context.'
+                  ? '${app.activeMemories.length} saved memories can be used in chat context.'
                   : 'Saved memories are kept, but new messages will not save or inject memory.',
               style: TextStyle(color: p.onSurfaceVariant, fontSize: 12),
             ),
           ),
-          if (app.memories.isNotEmpty) ...[
+          if (app.activeMemories.isNotEmpty) ...[
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: app.memories.take(6).map((memory) {
+              children: app.activeMemories.take(6).map((memory) {
+                final displayKey = memory.key.isNotEmpty ? '[${memory.key}] ' : '';
                 return Chip(
                   label: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 220),
+                    constraints: const BoxConstraints(maxWidth: 240),
                     child: Text(
-                      memory.content,
+                      '$displayKey${memory.content}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

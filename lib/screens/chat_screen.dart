@@ -399,6 +399,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             child: _ArenaLiveStage(state: app.arenaState),
           ),
 
+        if (app.lastMemoryNotification != null)
+          _MemoryNotificationToast(
+            notification: app.lastMemoryNotification!,
+            onDismiss: app.clearMemoryNotification,
+            onManage: () {
+              app.clearMemoryNotification();
+              app.setView(AppView.settings);
+            },
+          ),
+
         if (_showScrollToBottom)
           Positioned(
             right: 20,
@@ -2707,6 +2717,151 @@ class _SearchStatusPillState extends State<_SearchStatusPill>
           ),
         );
       },
+    );
+  }
+}
+
+class _MemoryNotificationToast extends StatefulWidget {
+  const _MemoryNotificationToast({
+    required this.notification,
+    required this.onDismiss,
+    required this.onManage,
+  });
+
+  final MemoryEventNotification notification;
+  final VoidCallback onDismiss;
+  final VoidCallback onManage;
+
+  @override
+  State<_MemoryNotificationToast> createState() => _MemoryNotificationToastState();
+}
+
+class _MemoryNotificationToastState extends State<_MemoryNotificationToast>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _anim;
+  late Animation<double> _fade;
+  late Animation<Offset> _slide;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _fade = CurvedAnimation(parent: _anim, curve: Curves.easeOut);
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -0.4),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic));
+
+    _anim.forward();
+    _timer = Timer(const Duration(seconds: 4), _dismiss);
+  }
+
+  void _dismiss() {
+    if (!mounted) return;
+    _anim.reverse().then((_) {
+      if (mounted) widget.onDismiss();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final copy = context.watch<AdoetzAppState>().copy;
+    final isDeleted = widget.notification.action == 'deleted';
+    final actionLabel = isDeleted
+        ? copy.t('sidebar', 'memoryDeleted')
+        : (widget.notification.action == 'saved'
+            ? copy.t('sidebar', 'memorySaved')
+            : copy.t('sidebar', 'memoryUpdated'));
+
+    return Positioned(
+      top: 68,
+      left: 16,
+      right: 16,
+      child: SlideTransition(
+        position: _slide,
+        child: FadeTransition(
+          opacity: _fade,
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 460),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: p.surface.withValues(alpha: 0.96),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: p.outline.withValues(alpha: 0.7)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.brain, size: 16, color: p.primary),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        actionLabel,
+                        style: TextStyle(
+                          color: p.onSurface,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: widget.onManage,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        child: Text(
+                          copy.t('sidebar', 'manage'),
+                          style: TextStyle(
+                            color: p.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: _dismiss,
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Icon(LucideIcons.x, size: 14, color: p.onSurfaceVariant),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

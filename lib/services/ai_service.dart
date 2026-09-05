@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../models.dart';
 import 'mcp_service.dart';
+import 'memory_retriever.dart';
 
 typedef TextDelta = void Function(String text);
 typedef StatusCallback = void Function(String status);
@@ -513,15 +514,15 @@ $chatHistory
     McpService? mcpService,
     required TextDelta onText,
   }) async {
-    final activeMemories = memories
-        .where((m) => m.deletedAt == null && m.sensitivity != 'high')
-        .toList()
-        ..sort((a, b) => (b.updatedAt ?? b.timestamp).compareTo(a.updatedAt ?? a.timestamp));
-    final topMemories = activeMemories.take(20).toList();
-    
+    final topMemories = MemoryRetriever.retrieve(
+      query: prompt,
+      memories: memories,
+      maxResults: 4,
+    );
+
     final memoryText = topMemories.isEmpty
         ? ''
-        : '\n\n=== IMPORTANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
+        : '\n\n=== RELEVANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
     final thinkingInstruction = thinkingMode
         ? ' Start with ${genSettings.thinkingEffort == ThinkingEffort.auto ? "concise" : thinkingEffortLabel(genSettings.thinkingEffort).toLowerCase()} reasoning enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, reasoning_content, or <think> tags. Answer directly.';
@@ -1079,14 +1080,14 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     }
 
     final model = selectedModel.replaceFirst('models/', '');
-    final activeMemories = memories
-        .where((m) => m.deletedAt == null && m.sensitivity != 'high')
-        .toList()
-        ..sort((a, b) => (b.updatedAt ?? b.timestamp).compareTo(a.updatedAt ?? a.timestamp));
-    final topMemories = activeMemories.take(20).toList();
+    final topMemories = MemoryRetriever.retrieve(
+      query: prompt,
+      memories: memories,
+      maxResults: 4,
+    );
     final memoryList = topMemories.isEmpty
         ? ''
-        : '\n\n=== IMPORTANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
+        : '\n\n=== RELEVANT USER CONTEXT ===\n${topMemories.map((m) => '- ${m.content}').join('\n')}\n=== END USER CONTEXT ===\n\n';
     final thinkingInstruction = thinkingMode
         ? ' Start with a ${genSettings.thinkingEffort == ThinkingEffort.auto ? "" : "${thinkingEffortLabel(genSettings.thinkingEffort).toLowerCase()} "}thinking process enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, thoughts, or <think> tags. Answer directly.';

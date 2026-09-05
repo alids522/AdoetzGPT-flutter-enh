@@ -9,6 +9,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models.dart';
 import 'live_audio_player.dart';
 import 'live_socket.dart';
+import 'memory_retriever.dart';
 
 typedef LiveTranscriptCallback = void Function(String text, bool finished);
 typedef LiveStatusCallback = void Function(String status);
@@ -514,9 +515,10 @@ class GeminiLiveService {
 
   String _systemInstruction() {
     final personality = _voicePrompt();
-    final memoryText = memories.isEmpty
+    final relevant = MemoryRetriever.retrieveCoreAndRelevant(memories, maxResults: 4);
+    final memoryText = relevant.isEmpty
         ? ''
-        : 'Known user memory:\n${memories.take(8).map((m) => '- ${m.content}').join('\n')}\n\n';
+        : 'Known user memory:\n${relevant.map((m) => '- ${m.content}').join('\n')}\n\n';
     final context = history.isEmpty
         ? ''
         : 'Recent chat context:\n${history.takeLast(14).map(_formatHistoryLine).join('\n')}\n\n';
