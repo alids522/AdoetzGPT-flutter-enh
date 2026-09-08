@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
@@ -33,8 +34,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     'Voice & Live',
     'Integrations',
     'Cron & Tasks',
+    'OAuth Apps',
     'Sync & Data',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final app = context.read<AdoetzAppState>();
+      if (app.targetSettingsCategory != null) {
+        setState(() {
+          _selectedCategory = app.targetSettingsCategory!;
+          app.targetSettingsCategory = null;
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -44,6 +61,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  String _categoryTitle(String category, UiCopy copy) {
+    return switch (category) {
+      'General' => copy.t('settings', 'categories.general', 'General'),
+      'AI & Generation' => copy.t('settings', 'categories.aiModels', 'AI & Generation'),
+      'Voice & Live' => copy.t('settings', 'categories.voiceLive', 'Voice & Live'),
+      'Integrations' => copy.t('settings', 'categories.integrations', 'Integrations'),
+      'Cron & Tasks' => copy.t('settings', 'categories.cronTasks', 'Cron & Tasks'),
+      'OAuth Apps' => copy.t('settings', 'categories.oauthApps', 'OAuth Apps'),
+      'Sync & Data' => copy.t('settings', 'categories.syncData', 'Sync & Data'),
+      _ => category,
+    };
+  }
+
   IconData _categoryIcon(String category) {
     return switch (category) {
       'General' => LucideIcons.user,
@@ -51,6 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'Voice & Live' => LucideIcons.mic,
       'Integrations' => LucideIcons.blocks,
       'Cron & Tasks' => LucideIcons.clock,
+      'OAuth Apps' => LucideIcons.keyRound,
       'Sync & Data' => LucideIcons.cloud,
       _ => LucideIcons.slidersHorizontal,
     };
@@ -63,6 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'Voice & Live' => copy.t('settings', 'categoriesDesc.voiceLive', 'Voice persona, speech & live camera'),
       'Integrations' => copy.t('settings', 'categoriesDesc.integrations', 'API keys, connectors & MCP servers'),
       'Cron & Tasks' => copy.t('settings', 'categoriesDesc.cronTasks', 'Background schedules & cron jobs'),
+      'OAuth Apps' => copy.t('settings', 'categoriesDesc.oauthApps', 'Manage Google & GitHub OAuth Client IDs and secrets'),
       'Sync & Data' => copy.t('settings', 'categoriesDesc.syncData', 'Supabase sync, database & security'),
       _ => '',
     };
@@ -100,6 +132,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final active = app.cronJobs.where((j) => j.enabled).length;
       text = '$active jobs';
       color = const Color(0xfff59e0b);
+    } else if (category == 'OAuth Apps') {
+      final active = app.oauthAppConfigs.where((c) => c.enabled).length;
+      text = '$active active';
+      color = const Color(0xff10b981);
     } else {
       final isSupabase = app.syncSettings.useSupabase && app.currentUser != null;
       text = isSupabase ? 'Cloud sync' : 'Guest';
@@ -172,6 +208,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if ('cron task schedule automated routine background'.contains(query) ||
         'tugas jadwal cron otomatis'.contains(query)) {
       items.add(const _CronJobsSection());
+      items.add(const SizedBox(height: 18));
+    }
+
+    if ('oauth app client id secret google github credentials auth token'.contains(query) ||
+        'aplikasi kredensial kunci id rahasia'.contains(query)) {
+      items.add(const _OAuthAppsSection());
       items.add(const SizedBox(height: 18));
     }
 
@@ -259,6 +301,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             _ApiSection(copy: copy),
             const SizedBox(height: 20),
+            const _OAuthAppsSection(),
+            const SizedBox(height: 20),
             const _ConnectorSection(),
             const SizedBox(height: 20),
             const _McpServerSection(),
@@ -276,6 +320,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const _CronJobsSection(),
+          ],
+        ),
+      'OAuth Apps' => const Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _OAuthAppsSection(),
           ],
         ),
       'Sync & Data' => Column(
@@ -450,7 +500,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        category,
+                                        _categoryTitle(category, copy),
                                         style: TextStyle(
                                           color: selected ? p.onSurface : p.onSurfaceVariant,
                                           fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
@@ -618,7 +668,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           size: 15,
                           color: selected ? p.primary : p.onSurfaceVariant,
                         ),
-                        label: Text(category),
+                        label: Text(_categoryTitle(category, copy)),
                         selected: selected,
                         onSelected: (value) {
                           if (value) setState(() => _selectedCategory = category);
@@ -4149,6 +4199,1079 @@ class _McpServerEditor extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _OAuthAppsSection extends StatelessWidget {
+  const _OAuthAppsSection();
+
+  void _copyToClipboard(BuildContext context, String text, String label) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$label copied to clipboard'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showOAuthAppDialog(
+    BuildContext context, {
+    OAuthAppConfig? initial,
+    String? defaultProvider,
+  }) {
+    showDialog(
+      context: context,
+      builder: (ctx) => _OAuthAppDialog(
+        initial: initial,
+        defaultProvider: defaultProvider ?? 'google',
+      ),
+    );
+  }
+
+  Widget _buildCallbackRow(
+    BuildContext context,
+    AppPalette p, {
+    required String label,
+    required String url,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: p.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: p.outline.withValues(alpha: 0.6)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  url,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11.5,
+                    color: p.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: () => _copyToClipboard(context, url, 'Callback URL'),
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(LucideIcons.copy, size: 14, color: p.onSurfaceVariant),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState(
+    BuildContext context,
+    AppPalette p, {
+    required String provider,
+    required Color accentColor,
+    required VoidCallback onAdd,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: p.surfaceDim,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: p.outline.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(LucideIcons.info, size: 18, color: accentColor),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'No custom $provider apps configured',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: p.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Currently using ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET from server .env (if present). Add custom credentials to override.',
+                  style: TextStyle(fontSize: 11.5, color: p.onSurfaceVariant, height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(LucideIcons.plus, size: 14),
+            label: Text('Add $provider App'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: accentColor,
+              side: BorderSide(color: accentColor.withValues(alpha: 0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+
+    final googleConfigs = app.oauthAppsForProvider('google');
+    final githubConfigs = app.oauthAppsForProvider('github');
+    final activeGoogle = app.activeOAuthApp('google');
+    final activeGithub = app.activeOAuthApp('github');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 1. Overview and Explanation Card
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SectionHeader(
+                icon: LucideIcons.keyRound,
+                title: 'In-App OAuth Credentials',
+                accent: Color(0xff10b981),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Configure your OAuth 2.0 Client IDs and Secrets directly in the app without editing server .env files. You can store multiple credentials per provider (e.g. Personal, Work, Production) and toggle which one is currently active.',
+                style: TextStyle(
+                  color: p.onSurfaceVariant,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 14),
+              // Helper info container with callback URLs
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: p.surfaceDim,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: p.outline.withValues(alpha: 0.5)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(LucideIcons.info, size: 15, color: p.primary),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Authorized Redirect URIs (Required in Developer Consoles)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: p.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    _buildCallbackRow(
+                      context,
+                      p,
+                      label: 'Google Cloud Console Redirect URI:',
+                      url: 'http://localhost:3000/api/auth/oauth/google/callback',
+                    ),
+                    const SizedBox(height: 8),
+                    _buildCallbackRow(
+                      context,
+                      p,
+                      label: 'GitHub OAuth Apps Authorization Callback URL:',
+                      url: 'http://localhost:3000/api/auth/oauth/github/callback',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // 2. Google OAuth Credentials Section
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: const Color(0xff4285f4).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xff4285f4).withValues(alpha: 0.35)),
+                    ),
+                    child: const Icon(LucideIcons.globe, color: Color(0xff4285f4), size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Google OAuth Apps',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: p.onSurface,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: activeGoogle != null
+                                    ? const Color(0xff10b981).withValues(alpha: 0.16)
+                                    : Colors.amber.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                activeGoogle != null ? 'Active: ${activeGoogle.name}' : 'Using .env fallback',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: activeGoogle != null ? const Color(0xff10b981) : Colors.amber.shade700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'For Gmail, Drive, Calendar, Docs, Tasks, Keep, and Sheets plugins',
+                          style: TextStyle(fontSize: 12, color: p.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => _showOAuthAppDialog(context, defaultProvider: 'google'),
+                    icon: const Icon(LucideIcons.plus, size: 15),
+                    label: const Text('Add Google App'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xff4285f4),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (googleConfigs.isEmpty)
+                _buildEmptyState(
+                  context,
+                  p,
+                  provider: 'Google',
+                  accentColor: const Color(0xff4285f4),
+                  onAdd: () => _showOAuthAppDialog(context, defaultProvider: 'google'),
+                )
+              else
+                ...googleConfigs.map(
+                  (config) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _OAuthAppEditorCard(
+                      config: config,
+                      accentColor: const Color(0xff4285f4),
+                      onEdit: () => _showOAuthAppDialog(context, initial: config),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // 3. GitHub OAuth Credentials Section
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: const Color(0xffa855f7).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xffa855f7).withValues(alpha: 0.35)),
+                    ),
+                    child: const Icon(LucideIcons.gitBranch, color: Color(0xffa855f7), size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'GitHub OAuth Apps',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: p.onSurface,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: activeGithub != null
+                                    ? const Color(0xff10b981).withValues(alpha: 0.16)
+                                    : Colors.amber.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                activeGithub != null ? 'Active: ${activeGithub.name}' : 'Using .env fallback',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: activeGithub != null ? const Color(0xff10b981) : Colors.amber.shade700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'For searching code, exploring repositories, commit history, and issues',
+                          style: TextStyle(fontSize: 12, color: p.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => _showOAuthAppDialog(context, defaultProvider: 'github'),
+                    icon: const Icon(LucideIcons.plus, size: 15),
+                    label: const Text('Add GitHub App'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xffa855f7),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (githubConfigs.isEmpty)
+                _buildEmptyState(
+                  context,
+                  p,
+                  provider: 'GitHub',
+                  accentColor: const Color(0xffa855f7),
+                  onAdd: () => _showOAuthAppDialog(context, defaultProvider: 'github'),
+                )
+              else
+                ...githubConfigs.map(
+                  (config) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _OAuthAppEditorCard(
+                      config: config,
+                      accentColor: const Color(0xffa855f7),
+                      onEdit: () => _showOAuthAppDialog(context, initial: config),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OAuthAppEditorCard extends StatefulWidget {
+  const _OAuthAppEditorCard({
+    required this.config,
+    required this.accentColor,
+    required this.onEdit,
+  });
+
+  final OAuthAppConfig config;
+  final Color accentColor;
+  final VoidCallback onEdit;
+
+  @override
+  State<_OAuthAppEditorCard> createState() => _OAuthAppEditorCardState();
+}
+
+class _OAuthAppEditorCardState extends State<_OAuthAppEditorCard> {
+  bool _showSecret = false;
+
+  void _copyToClipboard(BuildContext context, String text, String label) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$label copied to clipboard'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context, AdoetzAppState app) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete "${widget.config.name}"?'),
+        content: Text(
+          'Are you sure you want to delete this ${widget.config.provider} OAuth configuration? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xfff43f5e)),
+            onPressed: () {
+              app.deleteOAuthAppConfig(widget.config.id);
+              Navigator.pop(ctx);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final isEnabled = widget.config.enabled;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isEnabled
+            ? (p.isDark
+                ? widget.accentColor.withValues(alpha: 0.08)
+                : widget.accentColor.withValues(alpha: 0.04))
+            : p.surfaceDim,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isEnabled
+              ? widget.accentColor.withValues(alpha: 0.45)
+              : p.outline.withValues(alpha: 0.6),
+          width: isEnabled ? 1.4 : 1.0,
+        ),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header Row: Name, Active Status, Toggle Switch, Edit & Delete
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isEnabled ? const Color(0xff10b981) : Colors.grey,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.config.name,
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: p.onSurface,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isEnabled
+                            ? const Color(0xff10b981).withValues(alpha: 0.16)
+                            : p.outline.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: isEnabled
+                              ? const Color(0xff10b981).withValues(alpha: 0.4)
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isEnabled) ...[
+                            const Icon(LucideIcons.check, size: 10, color: Color(0xff10b981)),
+                            const SizedBox(width: 3),
+                          ],
+                          Text(
+                            isEnabled ? 'ACTIVE' : 'INACTIVE',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: isEnabled ? const Color(0xff10b981) : p.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Active',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isEnabled ? p.onSurface : p.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  CupertinoSwitch(
+                    value: isEnabled,
+                    activeTrackColor: const Color(0xff10b981),
+                    onChanged: (val) => app.toggleOAuthAppConfig(widget.config.id),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(LucideIcons.edit2, size: 16),
+                    color: p.onSurfaceVariant,
+                    tooltip: 'Edit Configuration',
+                    onPressed: widget.onEdit,
+                  ),
+                  IconButton(
+                    icon: const Icon(LucideIcons.trash2, size: 16),
+                    color: const Color(0xfff43f5e),
+                    tooltip: 'Delete Configuration',
+                    onPressed: () => _confirmDelete(context, app),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Client ID Display
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: p.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: p.outline.withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 90,
+                  child: Text(
+                    'Client ID',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: p.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SelectableText(
+                    widget.config.clientId,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11.5,
+                      color: p.onSurface,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(LucideIcons.copy, size: 14),
+                  color: p.onSurfaceVariant,
+                  tooltip: 'Copy Client ID',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.all(4),
+                  onPressed: () => _copyToClipboard(context, widget.config.clientId, 'Client ID'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Client Secret Display
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: p.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: p.outline.withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 90,
+                  child: Text(
+                    'Client Secret',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: p.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SelectableText(
+                    _showSecret ? widget.config.clientSecret : '••••••••••••••••••••••••',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11.5,
+                      color: p.onSurface,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(_showSecret ? LucideIcons.eyeOff : LucideIcons.eye, size: 14),
+                  color: p.onSurfaceVariant,
+                  tooltip: _showSecret ? 'Hide Secret' : 'Show Secret',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.all(4),
+                  onPressed: () => setState(() => _showSecret = !_showSecret),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(LucideIcons.copy, size: 14),
+                  color: p.onSurfaceVariant,
+                  tooltip: 'Copy Client Secret',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.all(4),
+                  onPressed: () => _copyToClipboard(context, widget.config.clientSecret, 'Client Secret'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OAuthAppDialog extends StatefulWidget {
+  const _OAuthAppDialog({
+    this.initial,
+    required this.defaultProvider,
+  });
+
+  final OAuthAppConfig? initial;
+  final String defaultProvider;
+
+  @override
+  State<_OAuthAppDialog> createState() => _OAuthAppDialogState();
+}
+
+class _OAuthAppDialogState extends State<_OAuthAppDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _clientIdCtrl;
+  late final TextEditingController _clientSecretCtrl;
+  late String _provider;
+  late bool _enabled;
+  bool _obscureSecret = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _provider = widget.initial?.provider ?? widget.defaultProvider;
+    _nameCtrl = TextEditingController(text: widget.initial?.name ?? '');
+    _clientIdCtrl = TextEditingController(text: widget.initial?.clientId ?? '');
+    _clientSecretCtrl = TextEditingController(text: widget.initial?.clientSecret ?? '');
+    _enabled = widget.initial?.enabled ?? true;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _clientIdCtrl.dispose();
+    _clientSecretCtrl.dispose();
+    super.dispose();
+  }
+
+  void _copyCallback(BuildContext context, String url) {
+    Clipboard.setData(ClipboardData(text: url));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Callback URL copied to clipboard'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _submit(BuildContext context, AdoetzAppState app) {
+    final name = _nameCtrl.text.trim();
+    final clientId = _clientIdCtrl.text.trim();
+    final clientSecret = _clientSecretCtrl.text.trim();
+
+    if (name.isEmpty) {
+      setState(() => _errorMessage = 'Please enter an App Name');
+      return;
+    }
+    if (clientId.isEmpty) {
+      setState(() => _errorMessage = 'Please enter a Client ID');
+      return;
+    }
+    if (clientSecret.isEmpty) {
+      setState(() => _errorMessage = 'Please enter a Client Secret');
+      return;
+    }
+
+    final id = widget.initial?.id ?? 'oauth_${DateTime.now().millisecondsSinceEpoch}';
+    final config = OAuthAppConfig(
+      id: id,
+      name: name,
+      provider: _provider,
+      clientId: clientId,
+      clientSecret: clientSecret,
+      enabled: _enabled,
+      createdAt: widget.initial?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
+    );
+
+    if (widget.initial != null) {
+      app.updateOAuthAppConfig(config);
+    } else {
+      app.addOAuthAppConfig(config);
+    }
+
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AdoetzAppState>();
+    final p = AppPalette.fromBrightness(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final isGoogle = _provider == 'google';
+    final callbackUrl = isGoogle
+        ? 'http://localhost:3000/api/auth/oauth/google/callback'
+        : 'http://localhost:3000/api/auth/oauth/github/callback';
+
+    return AlertDialog(
+      backgroundColor: p.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: (isGoogle ? const Color(0xff4285f4) : const Color(0xffa855f7))
+                  .withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              isGoogle ? LucideIcons.globe : LucideIcons.gitBranch,
+              size: 18,
+              color: isGoogle ? const Color(0xff4285f4) : const Color(0xffa855f7),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            widget.initial == null ? 'Add OAuth Credential' : 'Edit OAuth Credential',
+            style: TextStyle(color: p.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 500,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_errorMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xfff43f5e).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xfff43f5e).withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(
+                      color: Color(0xfff43f5e),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // Provider Choice Chips
+              Text(
+                'Provider',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: p.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('Google'),
+                    avatar: const Icon(LucideIcons.globe, size: 14, color: Color(0xff4285f4)),
+                    selected: isGoogle,
+                    onSelected: widget.initial != null
+                        ? null
+                        : (selected) {
+                            if (selected) setState(() => _provider = 'google');
+                          },
+                  ),
+                  const SizedBox(width: 10),
+                  ChoiceChip(
+                    label: const Text('GitHub'),
+                    avatar: const Icon(LucideIcons.gitBranch, size: 14, color: Color(0xffa855f7)),
+                    selected: !isGoogle,
+                    onSelected: widget.initial != null
+                        ? null
+                        : (selected) {
+                            if (selected) setState(() => _provider = 'github');
+                          },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // App Name
+              TextField(
+                controller: _nameCtrl,
+                style: TextStyle(color: p.onSurface, fontSize: 13),
+                decoration: InputDecoration(
+                  labelText: 'App Profile Name',
+                  hintText: isGoogle
+                      ? 'e.g. Work Workspace / Personal Console'
+                      : 'e.g. Org GitHub / Personal App',
+                  labelStyle: TextStyle(color: p.onSurfaceVariant, fontSize: 13),
+                  hintStyle: TextStyle(
+                    color: p.onSurfaceVariant.withValues(alpha: 0.5),
+                    fontSize: 12,
+                  ),
+                  filled: true,
+                  fillColor: p.surfaceDim,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Client ID
+              TextField(
+                controller: _clientIdCtrl,
+                style: TextStyle(color: p.onSurface, fontSize: 13, fontFamily: 'monospace'),
+                decoration: InputDecoration(
+                  labelText: 'Client ID',
+                  hintText: isGoogle
+                      ? 'xxxx.apps.googleusercontent.com'
+                      : 'Iv1.xxxxxxxxxxxxxxxx',
+                  labelStyle: TextStyle(color: p.onSurfaceVariant, fontSize: 13),
+                  hintStyle: TextStyle(
+                    color: p.onSurfaceVariant.withValues(alpha: 0.5),
+                    fontSize: 12,
+                  ),
+                  filled: true,
+                  fillColor: p.surfaceDim,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Client Secret
+              TextField(
+                controller: _clientSecretCtrl,
+                obscureText: _obscureSecret,
+                style: TextStyle(color: p.onSurface, fontSize: 13, fontFamily: 'monospace'),
+                decoration: InputDecoration(
+                  labelText: 'Client Secret',
+                  hintText: 'Enter OAuth client secret...',
+                  labelStyle: TextStyle(color: p.onSurfaceVariant, fontSize: 13),
+                  hintStyle: TextStyle(
+                    color: p.onSurfaceVariant.withValues(alpha: 0.5),
+                    fontSize: 12,
+                  ),
+                  filled: true,
+                  fillColor: p.surfaceDim,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureSecret ? LucideIcons.eye : LucideIcons.eyeOff, size: 16),
+                    color: p.onSurfaceVariant,
+                    onPressed: () => setState(() => _obscureSecret = !_obscureSecret),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Active Switch
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: p.surfaceDim,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _enabled ? const Color(0xff10b981).withValues(alpha: 0.4) : p.outline,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Set as Active Credential',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: p.onSurface,
+                            ),
+                          ),
+                          Text(
+                            'When enabled, deactivates other ${_provider.toUpperCase()} credentials.',
+                            style: TextStyle(fontSize: 11, color: p.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    CupertinoSwitch(
+                      value: _enabled,
+                      activeTrackColor: const Color(0xff10b981),
+                      onChanged: (val) => setState(() => _enabled = val),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Callback URL Helper in Dialog
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: p.surfaceDim,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: p.outline.withValues(alpha: 0.4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(LucideIcons.info, size: 13, color: p.primary),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Developer Console Callback URL',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: p.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SelectableText(
+                            callbackUrl,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: p.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(LucideIcons.copy, size: 13),
+                          color: p.onSurfaceVariant,
+                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(2),
+                          onPressed: () => _copyCallback(context, callbackUrl),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => _submit(context, app),
+          child: const Text('Save Credential'),
+        ),
+      ],
     );
   }
 }

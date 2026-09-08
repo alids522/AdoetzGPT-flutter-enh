@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../models.dart';
 import 'mcp_service.dart';
 import 'memory_retriever.dart';
+import 'plugin_service.dart';
 
 typedef TextDelta = void Function(String text);
 typedef StatusCallback = void Function(String status);
@@ -300,12 +301,18 @@ class AiService {
     required StatusCallback onStatus,
     String? generationId,
     McpService? mcpService,
+    PluginService? pluginService,
+    Map<String, bool>? pluginEnabledStates,
+    Map<String, OAuthProviderStatus>? pluginOAuthStatus,
+    String? authToken,
+    String? backendUrl,
+    String? userId,
   }) async {
     final client = http.Client();
     if (generationId != null) {
       _activeClients[generationId] = client;
     }
-    
+
     try {
       final modelName = selectedModel.trim();
     final endpointModel = _resolveEndpointModel(
@@ -364,6 +371,12 @@ class AiService {
         syncSettings: syncSettings,
         contextLimit: contextLimit,
         mcpService: mcpService,
+        pluginService: pluginService,
+        pluginEnabledStates: pluginEnabledStates,
+        pluginOAuthStatus: pluginOAuthStatus,
+        authToken: authToken,
+        backendUrl: backendUrl,
+        userId: userId,
         onText: onText,
       );
     }
@@ -382,6 +395,12 @@ class AiService {
       thinkingMode: thinkingMode,
       artifactMode: artifactMode,
       contextLimit: contextLimit,
+      pluginService: pluginService,
+      pluginEnabledStates: pluginEnabledStates,
+      pluginOAuthStatus: pluginOAuthStatus,
+      authToken: authToken,
+      backendUrl: backendUrl,
+      userId: userId,
       onText: onText,
     );
     } finally {
@@ -512,6 +531,12 @@ $chatHistory
     required SyncSettings syncSettings,
     int? contextLimit,
     McpService? mcpService,
+    PluginService? pluginService,
+    Map<String, bool>? pluginEnabledStates,
+    Map<String, OAuthProviderStatus>? pluginOAuthStatus,
+    String? authToken,
+    String? backendUrl,
+    String? userId,
     required TextDelta onText,
   }) async {
     final topMemories = MemoryRetriever.retrieve(
@@ -526,8 +551,22 @@ $chatHistory
     final thinkingInstruction = thinkingMode
         ? ' Start with ${genSettings.thinkingEffort == ThinkingEffort.auto ? "concise" : thinkingEffortLabel(genSettings.thinkingEffort).toLowerCase()} reasoning enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, reasoning_content, or <think> tags. Answer directly.';
+
+    final enabledPluginTools = (pluginService != null &&
+            pluginEnabledStates != null &&
+            pluginOAuthStatus != null)
+        ? pluginService.getEnabledToolSchemas(
+            enabledStates: pluginEnabledStates,
+            oauthStatus: pluginOAuthStatus,
+          )
+        : <Map<String, dynamic>>[];
+
+    final pluginInstruction = enabledPluginTools.isNotEmpty
+        ? '\n\n=== AUTONOMOUS PLUGIN CAPABILITIES ===\nYou have direct access to function tools for user services (Gmail, Google Drive, Google Calendar, Google Tasks, GitHub, Google Sheets, Google Docs).\nWhen the user asks to read, search, list, send, create, update, or inspect anything in their connected accounts, ALWAYS proactively call the relevant tool(s) to fetch or update the real data rather than giving hypothetical answers. Once you receive the tool response, answer the user accurately with the real data and cite any relevant IDs, links, or timestamps.\n=== END PLUGIN CAPABILITIES ===\n'
+        : '';
+
     final systemText =
-        '${_systemText(voiceSettings)}$thinkingInstruction\n\nPay attention to any user context or memories shared in the conversation.${artifactMode ? _artifactInstruction : ''}$memoryText';
+        '${_systemText(voiceSettings)}$thinkingInstruction\n\nPay attention to any user context or memories shared in the conversation.${artifactMode ? _artifactInstruction : ''}$memoryText$pluginInstruction';
 
     final finalPrompt = '$searchContext$prompt';
     final content = attachments.isEmpty
@@ -633,6 +672,10 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       } catch (e) {
         debugPrint('Error loading MCP tools: $e');
       }
+    }
+
+    if (enabledPluginTools.isNotEmpty) {
+      openaiTools.addAll(enabledPluginTools);
     }
 
     while (true) {
@@ -945,6 +988,41 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
                 'tool_call_id': callId,
               });
             }
+          } else if (pluginService != null && pluginService.isPluginTool(toolName)) {
+            final logStart = '\n<think>\n**Executing Plugin tool `$toolName`...**\n';
+            accumulatedResponse += logStart;
+            onText(accumulatedResponse);
+            try {
+              final argsMap = toolArgs.isEmpty
+                  ? <String, dynamic>{}
+                  : (jsonDecode(toolArgs) as Map? ?? <String, dynamic>{});
+              final toolResult = await pluginService.executeTool(
+                backendUrl: backendUrl ?? 'http://localhost:3000',
+                tool: toolName,
+                parameters: Map<String, dynamic>.from(argsMap),
+                authToken: authToken,
+                userId: userId,
+              );
+              final outputStr = jsonEncode(toolResult);
+              final logEnd = '\n```json\n$outputStr\n```\n</think>\n\n';
+              accumulatedResponse += logEnd;
+              onText(accumulatedResponse);
+
+              toolResults.add({
+                'role': 'tool',
+                'content': outputStr,
+                'tool_call_id': callId,
+              });
+            } catch (e) {
+              final logError = '\n<think>\n[Plugin Tool Execution Error: $e]\n</think>\n';
+              accumulatedResponse += logError;
+              onText(accumulatedResponse);
+              toolResults.add({
+                'role': 'tool',
+                'content': 'Error executing plugin tool: $e',
+                'tool_call_id': callId,
+              });
+            }
           } else if (openaiTools.any((t) => t['function']['name'] == toolName)) {
             final logStart = '\n<think>\n**Executing MCP tool `$toolName`...**\n';
             accumulatedResponse += logStart;
@@ -1035,7 +1113,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
           // Synthesis guard: instruct the model to synthesize the final answer and cite sources rather than looping tool calls
           currentMessages.add({
             'role': 'user',
-            'content': 'Gunakan hasil tool di atas dan jawab final sekarang dengan menyertakan tautan sumber/citation dalam format markdown. Jangan melakukan tool call tambahan.',
+            'content': 'Please use the tool execution results above to synthesize and write your complete, detailed final answer to the user. Present the findings clearly and cite any relevant identifiers or timestamps.',
           });
           continue;
         }
@@ -1070,6 +1148,12 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     required bool thinkingMode,
     required bool artifactMode,
     int? contextLimit,
+    PluginService? pluginService,
+    Map<String, bool>? pluginEnabledStates,
+    Map<String, OAuthProviderStatus>? pluginOAuthStatus,
+    String? authToken,
+    String? backendUrl,
+    String? userId,
     required TextDelta onText,
   }) async {
     final key = geminiApiKey.trim();
@@ -1091,8 +1175,36 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     final thinkingInstruction = thinkingMode
         ? ' Start with a ${genSettings.thinkingEffort == ThinkingEffort.auto ? "" : "${thinkingEffortLabel(genSettings.thinkingEffort).toLowerCase()} "}thinking process enclosed in <think>...</think> tags before the final answer.'
         : ' Do not include hidden reasoning, chain-of-thought, thoughts, or <think> tags. Answer directly.';
+
+    final enabledPluginTools = (pluginService != null &&
+            pluginEnabledStates != null &&
+            pluginOAuthStatus != null)
+        ? pluginService.getEnabledToolSchemas(
+            enabledStates: pluginEnabledStates,
+            oauthStatus: pluginOAuthStatus,
+          )
+        : <Map<String, dynamic>>[];
+
+    String pluginPromptInstruction = '';
+    if (enabledPluginTools.isNotEmpty) {
+      final toolsSummary = enabledPluginTools.map((t) {
+        final f = t['function'] as Map<String, dynamic>;
+        final params = f['parameters'] != null ? jsonEncode(f['parameters']) : '{}';
+        return '- ${f['name']}: ${f['description']}\n  Parameters: $params';
+      }).join('\n');
+      pluginPromptInstruction = '\n\n=== AUTONOMOUS PLUGIN TOOLS AVAILABLE ===\n'
+          'You have access to live external tools for user services (Gmail, Google Drive, Calendar, Tasks, Keep, GitHub, Sheets, Docs):\n'
+          '$toolsSummary\n\n'
+          'HOW TO EXECUTE TOOLS:\n'
+          'When the user asks you to check, read, search, list, send, create, or update anything in their accounts, YOU MUST CALL THE APPROPRIATE TOOL.\n'
+          'To call a tool, output exactly:\n'
+          '<tool_call name="TOOL_NAME">{"arg1": "value"}</tool_call>\n'
+          'You may explain your thoughts first. The system will intercept <tool_call>, execute the API call, and provide the JSON result back to you. Then you synthesize the final answer for the user.\n'
+          '=== END PLUGIN TOOLS ===\n';
+    }
+
     final systemText =
-        '${_systemText(voiceSettings)}$thinkingInstruction\n\nFORMATTING RULE: When providing code, always wrap it in Markdown triple backticks with the appropriate language identifier.${artifactMode ? _artifactInstruction : ''}$memoryList';
+        '${_systemText(voiceSettings)}$thinkingInstruction\n\nFORMATTING RULE: When providing code, always wrap it in Markdown triple backticks with the appropriate language identifier.${artifactMode ? _artifactInstruction : ''}$memoryList$pluginPromptInstruction';
     final contents = [
       ..._geminiHistory(
         history,
@@ -1120,86 +1232,161 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       },
     ];
 
-    final body = {
-      'systemInstruction': {
-        'parts': [
-          {'text': systemText},
-        ],
-      },
-      'contents': contents,
-      'generationConfig': {
-        'temperature': genSettings.temperature,
-        'topP': genSettings.topP,
-        'topK': genSettings.topK,
-        'maxOutputTokens': genSettings.maxOutputTokens,
-        if (thinkingMode && (model.toLowerCase().contains('thinking') || model.toLowerCase().contains('2.5') || model.toLowerCase().contains('2.0')))
-          'thinkingConfig': {
-            'includeThoughts': true,
-            if (thinkingBudgetTokens(genSettings.thinkingEffort) > 0)
-              'thinkingBudget': thinkingBudgetTokens(genSettings.thinkingEffort),
-          },
-      },
-    };
+    String accumulatedResponse = '';
+    final stopwatch = Stopwatch()..start();
 
-    final uri = Uri.https(
-      'generativelanguage.googleapis.com',
-      '/v1beta/models/$model:streamGenerateContent',
-      {'key': key, 'alt': 'sse'},
-    );
-    final request = http.Request('POST', uri)
-      ..headers['Content-Type'] = 'application/json'
-      ..body = jsonEncode(body);
-    final streamed = await client.send(request);
-    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-      final error = await streamed.stream.bytesToString();
-      throw Exception(_extractApiError(error, 'Gemini request failed.'));
-    }
+    for (var turn = 0; turn < 4; turn++) {
+      final body = {
+        'systemInstruction': {
+          'parts': [
+            {'text': systemText},
+          ],
+        },
+        'contents': contents,
+        'generationConfig': {
+          'temperature': genSettings.temperature,
+          'topP': genSettings.topP,
+          'topK': genSettings.topK,
+          'maxOutputTokens': genSettings.maxOutputTokens,
+          if (thinkingMode && (model.toLowerCase().contains('thinking') || model.toLowerCase().contains('2.5') || model.toLowerCase().contains('2.0')))
+            'thinkingConfig': {
+              'includeThoughts': true,
+              if (thinkingBudgetTokens(genSettings.thinkingEffort) > 0)
+                'thinkingBudget': thinkingBudgetTokens(genSettings.thinkingEffort),
+            },
+        },
+      };
 
-    final buffer = StringBuffer();
-    var inThought = false;
-    await for (final line
-        in streamed.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
-      final trimmed = line.trim();
-      if (!trimmed.startsWith('data: ')) continue;
-      try {
-        final data = jsonDecode(trimmed.substring(6));
-        final parts = data['candidates']?[0]?['content']?['parts'];
-        if (parts is! List) continue;
-        for (final part in parts.whereType<Map>()) {
-          final isThought = part['thought'] == true;
-          if (isThought && !thinkingMode) continue;
-          if (isThought && !inThought) {
-            inThought = true;
-            buffer.write('<think>\n');
-          } else if (!isThought && inThought) {
-            inThought = false;
-            buffer.write('\n</think>\n');
+      final uri = Uri.https(
+        'generativelanguage.googleapis.com',
+        '/v1beta/models/$model:streamGenerateContent',
+        {'key': key, 'alt': 'sse'},
+      );
+      final request = http.Request('POST', uri)
+        ..headers['Content-Type'] = 'application/json'
+        ..body = jsonEncode(body);
+      final streamed = await client.send(request);
+      if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+        final error = await streamed.stream.bytesToString();
+        throw Exception(_extractApiError(error, 'Gemini request failed.'));
+      }
+
+      final turnBuffer = StringBuffer();
+      var inThought = false;
+      await for (final line
+          in streamed.stream
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        try {
+          final data = jsonDecode(trimmed.substring(6));
+          final parts = data['candidates']?[0]?['content']?['parts'];
+          if (parts is! List) continue;
+          for (final part in parts.whereType<Map>()) {
+            final isThought = part['thought'] == true;
+            if (isThought && !thinkingMode) continue;
+            if (isThought && !inThought) {
+              inThought = true;
+              turnBuffer.write('<think>\n');
+            } else if (!isThought && inThought) {
+              inThought = false;
+              turnBuffer.write('\n</think>\n');
+            }
+            if (part['text'] != null) turnBuffer.write(stringValue(part['text']));
+            if (part['executableCode'] is Map) {
+              turnBuffer.write(
+                '\n```python\n${stringValue(part['executableCode']['code'])}\n```\n',
+              );
+            }
+            if (part['executionResult'] is Map) {
+              turnBuffer.write(
+                '\n```\n${stringValue(part['executionResult']['output'])}\n```\n',
+              );
+            }
           }
-          if (part['text'] != null) buffer.write(stringValue(part['text']));
-          if (part['executableCode'] is Map) {
-            buffer.write(
-              '\n```python\n${stringValue(part['executableCode']['code'])}\n```\n',
+          final currentFull = accumulatedResponse + turnBuffer.toString();
+          onText(
+            thinkingMode
+                ? currentFull
+                : stripThinkingBlocks(currentFull),
+          );
+        } catch (_) {}
+      }
+      if (inThought) turnBuffer.write('\n</think>\n');
+      final turnText = turnBuffer.toString();
+
+      // Check for <tool_call name="...">...</tool_call>
+      final toolRegex = RegExp(r'<tool_call\s+name="([^"]+)">([\s\S]*?)</tool_call>');
+      final match = toolRegex.firstMatch(turnText);
+
+      if (match != null && pluginService != null) {
+        final toolName = match.group(1)?.trim() ?? '';
+        final rawArgs = match.group(2)?.trim() ?? '{}';
+        if (pluginService.isPluginTool(toolName)) {
+          accumulatedResponse += turnText;
+          final logStart = '\n<think>\n**Executing Plugin tool `$toolName`...**\n';
+          accumulatedResponse += logStart;
+          onText(thinkingMode ? accumulatedResponse : stripThinkingBlocks(accumulatedResponse));
+
+          Map<String, dynamic> argsMap = {};
+          try {
+            final parsed = jsonDecode(rawArgs);
+            if (parsed is Map) argsMap = Map<String, dynamic>.from(parsed);
+          } catch (_) {}
+
+          try {
+            final toolResult = await pluginService.executeTool(
+              backendUrl: backendUrl ?? 'http://localhost:3000',
+              tool: toolName,
+              parameters: argsMap,
+              authToken: authToken,
+              userId: userId,
             );
-          }
-          if (part['executionResult'] is Map) {
-            buffer.write(
-              '\n```\n${stringValue(part['executionResult']['output'])}\n```\n',
-            );
+            final outputStr = jsonEncode(toolResult);
+            final logEnd = '\n```json\n$outputStr\n```\n</think>\n\n';
+            accumulatedResponse += logEnd;
+            onText(thinkingMode ? accumulatedResponse : stripThinkingBlocks(accumulatedResponse));
+
+            contents.add({
+              'role': 'model',
+              'parts': [{'text': turnText}],
+            });
+            contents.add({
+              'role': 'user',
+              'parts': [
+                {
+                  'text':
+                      'Tool Execution Result for `$toolName`:\n```json\n$outputStr\n```\nPlease synthesize and write your complete, detailed final answer to the user based on these results.',
+                },
+              ],
+            });
+            continue;
+          } catch (e) {
+            final logError = '\n<think>\n[Plugin Tool Execution Error: $e]\n</think>\n\n';
+            accumulatedResponse += logError;
+            onText(thinkingMode ? accumulatedResponse : stripThinkingBlocks(accumulatedResponse));
+            contents.add({
+              'role': 'model',
+              'parts': [{'text': turnText}],
+            });
+            contents.add({
+              'role': 'user',
+              'parts': [{'text': 'Tool execution failed: $e. Please answer using whatever information you have.'}],
+            });
+            continue;
           }
         }
-        onText(
-          thinkingMode
-              ? buffer.toString()
-              : stripThinkingBlocks(buffer.toString()),
-        );
-      } catch (_) {}
+      }
+
+      // No tool calls to execute, we reached the final answer
+      accumulatedResponse += turnText;
+      break;
     }
-    if (inThought) buffer.write('\n</think>\n');
+
     final responseText = thinkingMode
-        ? buffer.toString()
-        : stripThinkingBlocks(buffer.toString());
+        ? accumulatedResponse
+        : stripThinkingBlocks(accumulatedResponse);
     final inputTokens =
         countTokens(prompt) +
         countTokens(systemText) +
@@ -1210,6 +1397,7 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
       inputTokens: inputTokens,
       outputTokens: outputTokens,
       endpointName: 'Gemini',
+      generationTimeMs: stopwatch.elapsedMilliseconds,
     );
   }
 
@@ -1637,10 +1825,12 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
 
   String _proxyBase(SyncSettings syncSettings) {
     final configured = syncSettings.apiBaseUrl.trim();
-    if (configured.isNotEmpty) {
+    if (configured.isNotEmpty &&
+        !configured.contains('localhost') &&
+        !configured.contains('127.0.0.1')) {
       return configured.replaceAll(RegExp(r'/$'), '');
     }
-    return kIsWeb ? 'http://127.0.0.1:3000' : '';
+    return kIsWeb ? Uri.base.origin : '';
   }
 
   List<Map<String, dynamic>> _extractModels(dynamic data) {

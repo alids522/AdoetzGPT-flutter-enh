@@ -4,7 +4,7 @@ import 'package:uuid/uuid.dart';
 
 const _idGenerator = Uuid();
 
-enum AppView { chat, settings, tokenUsage }
+enum AppView { chat, settings, tokenUsage, plugins }
 
 enum LiveSpeechMode {
   voice,
@@ -1804,7 +1804,7 @@ class SyncSettings {
     this.database = const DatabaseSettings(),
     this.backupDatabases = const [],
     this.autoSyncBackups = false,
-    this.useSupabase = false,
+    this.useSupabase = true,
     this.supabaseUrl = 'https://supabase.alids.app',
     this.supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE3ODE0MjkzOTMsImV4cCI6MjA4Mjc1ODQwMH0.qgQ3hxL9JgRhZ-0vuIAG-myu8w5UeWkG1iNrsjqDvR0',
     this.e2eeEnabled = false,
@@ -1867,7 +1867,10 @@ class SyncSettings {
         json['backupDatabases'],
       ).map(DatabaseSettings.fromJson).toList(),
       autoSyncBackups: boolValue(json['autoSyncBackups']),
-      useSupabase: boolValue(json['useSupabase']),
+      useSupabase: json['useSupabase'] == null
+          ? true
+          : (boolValue(json['useSupabase']) ||
+              (db.databaseUrl.isEmpty && db.database.isEmpty)),
       supabaseUrl: stringValue(json['supabaseUrl']),
       supabaseAnonKey: stringValue(json['supabaseAnonKey']),
       e2eeEnabled: boolValue(json['e2eeEnabled']),
@@ -1945,6 +1948,141 @@ class McpServerConfig {
   }
 }
 
+class OAuthProviderStatus {
+  const OAuthProviderStatus({
+    this.connected = false,
+    this.email,
+    this.name,
+    this.username,
+    this.avatarUrl,
+    this.expiresAt,
+    this.scopes,
+  });
+
+  final bool connected;
+  final String? email;
+  final String? name;
+  final String? username;
+  final String? avatarUrl;
+  final int? expiresAt;
+  final String? scopes;
+
+  factory OAuthProviderStatus.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const OAuthProviderStatus();
+    return OAuthProviderStatus(
+      connected: boolValue(json['connected']),
+      email: json['email'] as String?,
+      name: json['name'] as String?,
+      username: json['username'] as String?,
+      avatarUrl: (json['avatarUrl'] ?? json['avatar_url']) as String?,
+      expiresAt: json['expiresAt'] != null ? intValue(json['expiresAt']) : null,
+      scopes: json['scopes'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'connected': connected,
+    if (email != null) 'email': email,
+    if (name != null) 'name': name,
+    if (username != null) 'username': username,
+    if (avatarUrl != null) 'avatarUrl': avatarUrl,
+    if (expiresAt != null) 'expiresAt': expiresAt,
+    if (scopes != null) 'scopes': scopes,
+  };
+
+  OAuthProviderStatus copyWith({
+    bool? connected,
+    String? email,
+    String? name,
+    String? username,
+    String? avatarUrl,
+    int? expiresAt,
+    String? scopes,
+  }) {
+    return OAuthProviderStatus(
+      connected: connected ?? this.connected,
+      email: email ?? this.email,
+      name: name ?? this.name,
+      username: username ?? this.username,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      expiresAt: expiresAt ?? this.expiresAt,
+      scopes: scopes ?? this.scopes,
+    );
+  }
+}
+
+class OAuthAppConfig {
+  const OAuthAppConfig({
+    required this.id,
+    required this.name,
+    required this.provider,
+    required this.clientId,
+    required this.clientSecret,
+    this.enabled = true,
+    this.createdAt,
+  });
+
+  final String id;
+  final String name;
+  final String provider; // 'google' | 'github'
+  final String clientId;
+  final String clientSecret;
+  final bool enabled;
+  final int? createdAt;
+
+  factory OAuthAppConfig.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const OAuthAppConfig(
+        id: '',
+        name: '',
+        provider: 'google',
+        clientId: '',
+        clientSecret: '',
+        enabled: false,
+      );
+    }
+    return OAuthAppConfig(
+      id: stringValue(json['id']),
+      name: stringValue(json['name']),
+      provider: stringValue(json['provider'], 'google').toLowerCase(),
+      clientId: stringValue(json['clientId'] ?? json['client_id']),
+      clientSecret: stringValue(json['clientSecret'] ?? json['client_secret']),
+      enabled: boolValue(json['enabled'] ?? json['is_active'], true),
+      createdAt: json['createdAt'] == null ? null : intValue(json['createdAt']),
+    );
+  }
+
+  Map<String, dynamic> toJson({bool includeSecret = true}) => {
+    'id': id,
+    'name': name,
+    'provider': provider,
+    'clientId': clientId,
+    if (includeSecret) 'clientSecret': clientSecret,
+    'enabled': enabled,
+    if (createdAt != null) 'createdAt': createdAt,
+  };
+
+  OAuthAppConfig copyWith({
+    String? id,
+    String? name,
+    String? provider,
+    String? clientId,
+    String? clientSecret,
+    bool? enabled,
+    int? createdAt,
+  }) {
+    return OAuthAppConfig(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      provider: provider ?? this.provider,
+      clientId: clientId ?? this.clientId,
+      clientSecret: clientSecret ?? this.clientSecret,
+      enabled: enabled ?? this.enabled,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+}
+
 class PersistedAppState {
   const PersistedAppState({
     required this.currentUser,
@@ -1975,6 +2113,8 @@ class PersistedAppState {
     required this.mcpServers,
     this.cronJobs = const [],
     this.personas = const [],
+    this.pluginEnabledStates = defaultPluginEnabledStates,
+    this.oauthAppConfigs = const [],
     required this.soundEffectsEnabled,
     required this.isLiveVideoEnabled,
     required this.isLiveFrontCamera,
@@ -1982,6 +2122,17 @@ class PersistedAppState {
     this.lastSyncAt,
     this.savedAt,
   });
+
+  static const Map<String, bool> defaultPluginEnabledStates = {
+    'gmail': true,
+    'drive': true,
+    'calendar': true,
+    'tasks': true,
+    'keep': true,
+    'github': true,
+    'sheets': true,
+    'docs': true,
+  };
 
   final UserAccount? currentUser;
   final String authToken;
@@ -2011,6 +2162,8 @@ class PersistedAppState {
   final List<McpServerConfig> mcpServers;
   final List<AiCronJob> cronJobs;
   final List<PersonaProfile> personas;
+  final Map<String, bool> pluginEnabledStates;
+  final List<OAuthAppConfig> oauthAppConfigs;
   final bool soundEffectsEnabled;
   final bool isLiveVideoEnabled;
   final bool isLiveFrontCamera;
@@ -2056,6 +2209,8 @@ class PersistedAppState {
       mcpServers: const [],
       cronJobs: const [],
       personas: const [],
+      pluginEnabledStates: PersistedAppState.defaultPluginEnabledStates,
+      oauthAppConfigs: const [],
       soundEffectsEnabled: true,
       isLiveVideoEnabled: false,
       isLiveFrontCamera: false,
@@ -2140,6 +2295,16 @@ class PersistedAppState {
       personas: mapList(
         json['personas'],
       ).map(PersonaProfile.fromJson).toList(),
+      pluginEnabledStates: json['pluginEnabledStates'] is Map
+          ? Map<String, bool>.from(
+              (json['pluginEnabledStates'] as Map).map(
+                (k, v) => MapEntry(k.toString(), v == true),
+              ),
+            )
+          : PersistedAppState.defaultPluginEnabledStates,
+      oauthAppConfigs: mapList(
+        json['oauthAppConfigs'] ?? json['oauth_app_configs'],
+      ).map(OAuthAppConfig.fromJson).toList(),
       soundEffectsEnabled: boolValue(json['soundEffectsEnabled'], true),
       isLiveVideoEnabled: boolValue(json['isLiveVideoEnabled']),
       isLiveFrontCamera: boolValue(json['isLiveFrontCamera']),
@@ -2187,6 +2352,10 @@ class PersistedAppState {
     'mcpServers': mcpServers.map((item) => item.toJson()).toList(),
     'cronJobs': cronJobs.map((item) => item.toJson()).toList(),
     'personas': personas.map((item) => item.toJson()).toList(),
+    'pluginEnabledStates': pluginEnabledStates,
+    'oauthAppConfigs': oauthAppConfigs
+        .map((item) => item.toJson(includeSecret: includeSecrets))
+        .toList(),
     'soundEffectsEnabled': soundEffectsEnabled,
     'isLiveVideoEnabled': isLiveVideoEnabled,
     'isLiveFrontCamera': isLiveFrontCamera,
@@ -2224,6 +2393,8 @@ class PersistedAppState {
     List<McpServerConfig>? mcpServers,
     List<AiCronJob>? cronJobs,
     List<PersonaProfile>? personas,
+    Map<String, bool>? pluginEnabledStates,
+    List<OAuthAppConfig>? oauthAppConfigs,
     bool? soundEffectsEnabled,
     bool? isLiveVideoEnabled,
     bool? isLiveFrontCamera,
@@ -2261,6 +2432,8 @@ class PersistedAppState {
       mcpServers: mcpServers ?? this.mcpServers,
       cronJobs: cronJobs ?? this.cronJobs,
       personas: personas ?? this.personas,
+      pluginEnabledStates: pluginEnabledStates ?? this.pluginEnabledStates,
+      oauthAppConfigs: oauthAppConfigs ?? this.oauthAppConfigs,
       soundEffectsEnabled: soundEffectsEnabled ?? this.soundEffectsEnabled,
       isLiveVideoEnabled: isLiveVideoEnabled ?? this.isLiveVideoEnabled,
       isLiveFrontCamera: isLiveFrontCamera ?? this.isLiveFrontCamera,

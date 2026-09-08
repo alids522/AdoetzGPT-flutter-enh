@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server/index.ts",
+    "build:web": "flutter build web",
     "start": "cross-env NODE_ENV=production tsx server/index.ts"
   },
   "dependencies": {

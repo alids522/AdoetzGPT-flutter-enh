@@ -16,6 +16,7 @@ import '../ui/app_theme.dart';
 import 'chat_screen.dart';
 import 'settings_screen.dart';
 import 'token_usage_screen.dart';
+import 'plugin_screen.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -94,6 +95,7 @@ class _AppShellState extends State<AppShell> {
                       AppView.chat => const ChatScreen(),
                       AppView.settings => const SettingsScreen(),
                       AppView.tokenUsage => const TokenUsageScreen(),
+                      AppView.plugins => const PluginScreen(),
                     },
                   ),
                 ),
@@ -1025,6 +1027,15 @@ class _AppDrawerState extends State<_AppDrawer> {
                       await app.startLiveTranslate();
                     }
                   }),
+                ),
+                _NavTile(
+                  icon: LucideIcons.blocks,
+                  label: copy.t('sidebar', 'plugins', 'Plugins'),
+                  active: app.currentView == AppView.plugins,
+                  onTap: () => _closeAfter(
+                    context,
+                    () => app.setView(AppView.plugins),
+                  ),
                 ),
                 _NavTile(
                   icon: LucideIcons.trendingUp,

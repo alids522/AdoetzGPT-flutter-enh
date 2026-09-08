@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$flutter = 'C:\Users\abdur\flutter\bin\flutter.bat'
+$flutter = if (Test-Path 'C:\flutter\bin\flutter.bat') { 'C:\flutter\bin\flutter.bat' } elseif (Test-Path 'C:\Users\abdur\flutter\bin\flutter.bat') { 'C:\Users\abdur\flutter\bin\flutter.bat' } else { 'flutter' }
 $requestedPort = if ($env:ADOETZ_WEB_PORT) { [int]$env:ADOETZ_WEB_PORT } else { 5100 }
 $port = $requestedPort
 

@@ -61,6 +61,8 @@ flutter_web_server_*.log
 # Backend Node.js
 node_modules/
 .env
+data/
+*.txt
 
 # React Project
 react-project/

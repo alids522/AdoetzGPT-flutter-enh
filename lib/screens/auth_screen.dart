@@ -23,6 +23,18 @@ class _AuthScreenState extends State<AuthScreen> {
   String _error = '';
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final app = context.read<AdoetzAppState>();
+      if (!app.syncSettings.useSupabase) {
+        app.updateSyncSettings(app.syncSettings.copyWith(useSupabase: true));
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _username.dispose();
     _password.dispose();
@@ -96,6 +108,8 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        _buildEngineSelectorCard(context, app, p),
+                        const SizedBox(height: 20),
                         _label(app.syncSettings.useSupabase ? 'Email' : 'Username', p),
                         _field(
                           controller: _username,
@@ -272,6 +286,112 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  Widget _buildEngineSelectorCard(BuildContext context, AdoetzAppState app, AppPalette p) {
+    final isSupabase = app.syncSettings.useSupabase;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isSupabase
+            ? (p.isDark
+                ? const Color(0xff0d3329).withValues(alpha: 0.50)
+                : const Color(0xffdcfce7).withValues(alpha: 0.85))
+            : p.surfaceDim,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isSupabase
+              ? (p.isDark
+                  ? const Color(0xff10b981).withValues(alpha: 0.45)
+                  : const Color(0xff10b981).withValues(alpha: 0.60))
+              : p.outline.withValues(alpha: 0.4),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: isSupabase
+                  ? const Color(0xff10b981).withValues(alpha: 0.20)
+                  : p.onSurface.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              isSupabase ? LucideIcons.cloud : LucideIcons.database,
+              size: 20,
+              color: isSupabase ? const Color(0xff10b981) : p.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      isSupabase ? 'Supabase Engine' : 'PostgreSQL Engine',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: isSupabase
+                            ? (p.isDark ? const Color(0xff34d399) : const Color(0xff059669))
+                            : p.onSurface,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isSupabase
+                            ? const Color(0xff10b981).withValues(alpha: 0.18)
+                            : p.outline.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        isSupabase ? 'PRIMARY' : 'SELF-HOSTED',
+                        style: TextStyle(
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                          color: isSupabase
+                              ? const Color(0xff10b981)
+                              : p.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isSupabase
+                      ? 'Cloud sync & native authentication'
+                      : 'Direct database / HTTP socket sync',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: p.onSurfaceVariant,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: isSupabase,
+            activeThumbColor: const Color(0xff10b981),
+            activeTrackColor: const Color(0xff10b981).withValues(alpha: 0.5),
+            onChanged: (val) {
+              app.updateSyncSettings(
+                app.syncSettings.copyWith(useSupabase: val),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _label(String text, AppPalette p) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
@@ -310,16 +430,18 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   bool _canSubmit(AdoetzAppState app) {
-    final email = _username.text.trim();
-    final isValidEmail = email.contains('@') && email.contains('.');
+    final emailOrUser = _username.text.trim();
+    final isValid = app.syncSettings.useSupabase
+        ? (emailOrUser.contains('@') && emailOrUser.contains('.'))
+        : emailOrUser.isNotEmpty;
     if (app.syncSettings.useSupabase) {
-      return isValidEmail &&
+      return isValid &&
           _password.text.isNotEmpty &&
           app.syncSettings.supabaseUrl.trim().isNotEmpty &&
           app.syncSettings.supabaseAnonKey.trim().isNotEmpty;
     }
     final db = app.syncSettings.database;
-    return isValidEmail &&
+    return isValid &&
         _password.text.isNotEmpty &&
         db.databaseUrl.trim().isNotEmpty &&
         db.database.trim().isNotEmpty &&
@@ -391,16 +513,6 @@ class _AdvancedDbSettings extends StatelessWidget {
           value: app.syncSettings.apiBaseUrl,
           onChanged: (value) => app.updateSyncSettings(
             app.syncSettings.copyWith(apiBaseUrl: value),
-          ),
-        ),
-        SwitchListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Use Supabase as Primary Engine'),
-          subtitle: const Text('Connect directly to Supabase using native SDK.'),
-          value: app.syncSettings.useSupabase,
-          onChanged: (value) => app.updateSyncSettings(
-            app.syncSettings.copyWith(useSupabase: value),
           ),
         ),
         if (app.syncSettings.useSupabase) ...[

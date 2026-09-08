@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models.dart';
@@ -17,6 +18,7 @@ import '../services/ai_service.dart';
 import '../services/gemini_live_service.dart';
 import '../services/live_foreground_service.dart';
 import '../services/memory_agent.dart';
+import '../services/plugin_service.dart';
 import '../services/storage_service.dart';
 import '../services/sync_service.dart';
 import '../services/mcp_service.dart';
@@ -96,6 +98,7 @@ class AdoetzAppState extends ChangeNotifier {
   String? cachedPasswordHash;
 
   AppView currentView = AppView.chat;
+  String? targetSettingsCategory;
   AppLanguage language = AppLanguage.id;
   UiCopy get copy => UiCopy(language);
   String theme = 'dark';
@@ -145,7 +148,31 @@ class AdoetzAppState extends ChangeNotifier {
   List<PersonaProfile> personas = const [];
   String? activePersonaId;
   ArenaSessionState arenaState = const ArenaSessionState();
+  Map<String, bool> pluginEnabledStates = PersistedAppState.defaultPluginEnabledStates;
+  List<OAuthAppConfig> oauthAppConfigs = const [];
+  Map<String, OAuthProviderStatus> pluginOAuthStatus = const {
+    'google': OAuthProviderStatus(),
+    'github': OAuthProviderStatus(),
+  };
+  bool isCheckingPluginOAuth = false;
+  Timer? _pluginOAuthPollTimer;
   Timer? _cronTimer;
+
+  String get backendUrl {
+    if (kIsWeb) {
+      final configured = syncSettings.apiBaseUrl.trim();
+      if (configured.isNotEmpty &&
+          !configured.contains('localhost') &&
+          !configured.contains('127.0.0.1')) {
+        return configured;
+      }
+      return Uri.base.origin;
+    }
+    if (syncSettings.apiBaseUrl.trim().isNotEmpty) {
+      return syncSettings.apiBaseUrl.trim();
+    }
+    return SyncService.defaultWebApiBaseUrl;
+  }
 
   String _newId(String prefix) => '$prefix-${_idGenerator.v4()}';
 
@@ -237,6 +264,13 @@ class AdoetzAppState extends ChangeNotifier {
       );
     }
 
+    if (currentUser == null ||
+        (!syncSettings.useSupabase &&
+            syncSettings.database.databaseUrl.isEmpty &&
+            syncSettings.database.database.isEmpty)) {
+      syncSettings = syncSettings.copyWith(useSupabase: true);
+    }
+
     if (activeSessions.isEmpty) {
       final session = Session.empty(null, selectedTargetId);
       sessions = [...sessions, session];
@@ -263,6 +297,7 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(_persist(touchSavedAt: false));
     unawaited(_pullRemoteStateAfterStartup());
     unawaited(_startRealtimeSync());
+    unawaited(refreshPluginOAuthStatus());
     
     // Connect to MCP servers
     if (mcpService != null) {
@@ -385,6 +420,8 @@ class AdoetzAppState extends ChangeNotifier {
       mcpServers: mcpServers,
       cronJobs: cronJobs,
       personas: personas,
+      pluginEnabledStates: pluginEnabledStates,
+      oauthAppConfigs: oauthAppConfigs,
       lastSyncAt: lastSyncAt,
       savedAt: savedAt,
     );
@@ -429,6 +466,8 @@ class AdoetzAppState extends ChangeNotifier {
     mcpServers = state.mcpServers;
     cronJobs = state.cronJobs;
     personas = state.personas;
+    pluginEnabledStates = state.pluginEnabledStates;
+    oauthAppConfigs = state.oauthAppConfigs;
     if (notify) notifyListeners();
   }
 
@@ -591,6 +630,12 @@ class AdoetzAppState extends ChangeNotifier {
       isLiveFrontCamera: remoteIsNewer
           ? remote.isLiveFrontCamera
           : local.isLiveFrontCamera,
+      pluginEnabledStates: remoteIsNewer
+          ? remote.pluginEnabledStates
+          : local.pluginEnabledStates,
+      oauthAppConfigs: remoteIsNewer
+          ? remote.oauthAppConfigs
+          : local.oauthAppConfigs,
       lastSyncAt: local.lastSyncAt,
       savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
     );
@@ -1052,7 +1097,7 @@ class AdoetzAppState extends ChangeNotifier {
     modelContextOverrides = defaults.modelContextOverrides;
     
     // Explicitly reset ALL settings that might leak
-    syncSettings = defaults.syncSettings;
+    syncSettings = defaults.syncSettings.copyWith(useSupabase: true);
     genSettings = defaults.genSettings;
     voiceSettings = defaults.voiceSettings;
     language = defaults.language;
@@ -1068,11 +1113,17 @@ class AdoetzAppState extends ChangeNotifier {
     modelInputCosts = defaults.modelInputCosts;
     modelOutputCosts = defaults.modelOutputCosts;
     modelCacheHitCosts = defaults.modelCacheHitCosts;
-    
+    pluginEnabledStates = defaults.pluginEnabledStates;
+    oauthAppConfigs = defaults.oauthAppConfigs;
+    pluginOAuthStatus = const {
+      'google': OAuthProviderStatus(),
+      'github': OAuthProviderStatus(),
+    };
+
     // Crucially clear cache and timestamps
     cachedPasswordHash = null;
     lastSyncAt = null;
-    
+
     notifyListeners();
     await _storage.clearAuth();
     await _persist();
@@ -1081,6 +1132,209 @@ class AdoetzAppState extends ChangeNotifier {
   void setView(AppView view) {
     currentView = view;
     notifyListeners();
+    if (view == AppView.plugins) {
+      unawaited(refreshPluginOAuthStatus());
+    }
+  }
+
+  void openSettings({String? category}) {
+    currentView = AppView.settings;
+    targetSettingsCategory = category;
+    notifyListeners();
+  }
+
+  Future<void> togglePluginService(String serviceId, bool enabled) async {
+    final updated = Map<String, bool>.from(pluginEnabledStates);
+    updated[serviceId] = enabled;
+    pluginEnabledStates = updated;
+    notifyListeners();
+    await _persistAndScheduleRemote();
+  }
+
+  Future<void> refreshPluginOAuthStatus() async {
+    if (isCheckingPluginOAuth) return;
+    isCheckingPluginOAuth = true;
+    notifyListeners();
+    try {
+      final statuses = await PluginService.instance.fetchOAuthStatus(
+        backendUrl,
+        authToken: authToken,
+        userId: currentUser?.id,
+      );
+      pluginOAuthStatus = statuses;
+    } catch (e) {
+      debugPrint('Error refreshing plugin OAuth status: $e');
+    } finally {
+      isCheckingPluginOAuth = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> connectOAuthProvider(String provider) async {
+    final authUrl = PluginService.instance.getAuthorizeUrl(
+      backendUrl,
+      provider,
+      authToken: authToken,
+      userId: currentUser?.id,
+    );
+
+    final uri = Uri.parse(authUrl);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+
+      // Start periodic poll for 60 seconds (every 2 seconds)
+      _pluginOAuthPollTimer?.cancel();
+      var attempts = 0;
+      _pluginOAuthPollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+        attempts++;
+        await refreshPluginOAuthStatus();
+        final isConnected = pluginOAuthStatus[provider]?.connected == true;
+        if (isConnected || attempts >= 30) {
+          timer.cancel();
+          _pluginOAuthPollTimer = null;
+        }
+      });
+    } catch (e) {
+      debugPrint('Could not launch OAuth URL: $e');
+    }
+  }
+
+  Future<bool> disconnectOAuthProvider(String provider) async {
+    final ok = await PluginService.instance.disconnectProvider(
+      backendUrl,
+      provider,
+      authToken: authToken,
+      userId: currentUser?.id,
+    );
+    await refreshPluginOAuthStatus();
+    return ok;
+  }
+
+  OAuthAppConfig? activeOAuthApp(String provider) {
+    try {
+      return oauthAppConfigs.firstWhere(
+        (c) => c.provider.toLowerCase() == provider.toLowerCase() && c.enabled,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<OAuthAppConfig> oauthAppsForProvider(String provider) {
+    return oauthAppConfigs
+        .where((c) => c.provider.toLowerCase() == provider.toLowerCase())
+        .toList();
+  }
+
+  Future<void> addOAuthAppConfig(OAuthAppConfig config) async {
+    final list = List<OAuthAppConfig>.from(oauthAppConfigs);
+    if (config.enabled) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].provider.toLowerCase() == config.provider.toLowerCase()) {
+          list[i] = list[i].copyWith(enabled: false);
+        }
+      }
+    }
+    list.add(config);
+    oauthAppConfigs = list;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+
+    unawaited(
+      PluginService.instance.saveOAuthApp(
+        backendUrl,
+        config,
+        authToken: authToken,
+        userId: currentUser?.id,
+      ),
+    );
+  }
+
+  Future<void> updateOAuthAppConfig(OAuthAppConfig config) async {
+    final list = List<OAuthAppConfig>.from(oauthAppConfigs);
+    final idx = list.indexWhere((c) => c.id == config.id);
+    if (idx < 0) return;
+
+    if (config.enabled) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].provider.toLowerCase() == config.provider.toLowerCase()) {
+          list[i] = list[i].copyWith(enabled: false);
+        }
+      }
+    }
+
+    list[idx] = config;
+    oauthAppConfigs = list;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+
+    unawaited(
+      PluginService.instance.saveOAuthApp(
+        backendUrl,
+        config,
+        authToken: authToken,
+        userId: currentUser?.id,
+      ),
+    );
+  }
+
+  Future<void> deleteOAuthAppConfig(String id) async {
+    final list = List<OAuthAppConfig>.from(oauthAppConfigs);
+    list.removeWhere((c) => c.id == id);
+    oauthAppConfigs = list;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+
+    unawaited(
+      PluginService.instance.deleteOAuthApp(
+        backendUrl,
+        id,
+        authToken: authToken,
+        userId: currentUser?.id,
+      ),
+    );
+  }
+
+  Future<void> toggleOAuthAppConfig(String id) async {
+    final list = List<OAuthAppConfig>.from(oauthAppConfigs);
+    final idx = list.indexWhere((c) => c.id == id);
+    if (idx < 0) return;
+
+    final target = list[idx];
+    final newEnabled = !target.enabled;
+
+    if (newEnabled) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].provider.toLowerCase() == target.provider.toLowerCase()) {
+          list[i] = list[i].copyWith(enabled: false);
+        }
+      }
+    }
+
+    list[idx] = target.copyWith(enabled: newEnabled);
+    oauthAppConfigs = list;
+    notifyListeners();
+    unawaited(_persistAndScheduleRemote());
+
+    unawaited(
+      PluginService.instance.toggleOAuthApp(
+        backendUrl,
+        id,
+        authToken: authToken,
+        userId: currentUser?.id,
+      ),
+    );
+  }
+
+  Future<void> syncOAuthAppsWithBackend() async {
+    if (oauthAppConfigs.isNotEmpty) {
+      await PluginService.instance.syncOAuthApps(
+        backendUrl,
+        oauthAppConfigs,
+        authToken: authToken,
+        userId: currentUser?.id,
+      );
+    }
   }
 
   bool handleSystemBack() {
@@ -2072,6 +2326,12 @@ class AdoetzAppState extends ChangeNotifier {
         syncSettings: syncSettings,
         generationId: generationId,
         mcpService: mcpService,
+        pluginService: PluginService.instance,
+        pluginEnabledStates: pluginEnabledStates,
+        pluginOAuthStatus: pluginOAuthStatus,
+        authToken: authToken,
+        backendUrl: backendUrl,
+        userId: currentUser?.id,
         onStatus: (status) {
           _queueStreamText(generationId, session.id, botId, status);
         },
