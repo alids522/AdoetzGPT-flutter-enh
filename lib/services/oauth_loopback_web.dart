@@ -22,7 +22,8 @@ class OAuthLoopbackServer {
   OAuthLoopbackServer._();
 
   int get port => 3000;
-  String get redirectUri => 'http://127.0.0.1:3000/api/auth/oauth/callback';
+  String redirectUri(String provider) =>
+      'http://127.0.0.1:3000/api/auth/oauth/$provider/callback';
 
   static Future<OAuthLoopbackServer?> start({int preferredPort = 3000}) async {
     // Loopback HTTP server is not supported on web
