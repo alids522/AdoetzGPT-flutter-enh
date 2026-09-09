@@ -1991,7 +1991,7 @@ class _MarkdownMessage extends StatefulWidget {
 }
 
 class _MarkdownMessageState extends State<_MarkdownMessage> {
-  bool _showPreview = false;
+  bool? _userPreviewSelection;
   bool _isDownloading = false;
 
   Future<void> _downloadZip(Map<String, String> files) async {
@@ -2039,38 +2039,37 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
   Widget build(BuildContext context) {
     final app = context.watch<AdoetzAppState>();
 
-    Map<String, String>? files;
-    bool hasHtmlFiles = false;
-
-    if (app.isArtifactMode) {
-      files = ArtifactParser.parseFiles(widget.data);
-      hasHtmlFiles = files.keys.any((k) => k.endsWith('.html'));
-    }
+    // Parse files from markdown content
+    final files = ArtifactParser.parseFiles(widget.data);
+    final hasWebArtifact = ArtifactParser.hasWebArtifact(files);
+    final showArtifactUI = files.isNotEmpty && (app.isArtifactMode || hasWebArtifact);
+    final isPreviewActive = _userPreviewSelection ?? hasWebArtifact;
 
     final parts = _splitMarkdown(widget.data);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (app.isArtifactMode && hasHtmlFiles)
+        if (showArtifactUI)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Row(
               children: [
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('Code')),
-                    ButtonSegment(value: true, label: Text('Preview')),
-                  ],
-                  selected: {_showPreview},
-                  onSelectionChanged: (set) {
-                    setState(() => _showPreview = set.first);
-                  },
-                  style: SegmentedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    textStyle: const TextStyle(fontSize: 12),
+                if (hasWebArtifact)
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: false, label: Text('Code')),
+                      ButtonSegment(value: true, label: Text('Preview')),
+                    ],
+                    selected: {isPreviewActive},
+                    onSelectionChanged: (set) {
+                      setState(() => _userPreviewSelection = set.first);
+                    },
+                    style: SegmentedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
                   ),
-                ),
                 const Spacer(),
                 if (_isDownloading)
                   const SizedBox(
@@ -2080,9 +2079,9 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
                   )
                 else
                   TextButton.icon(
-                    onPressed: () => _downloadZip(files!),
+                    onPressed: () => _downloadZip(files),
                     icon: const Icon(LucideIcons.download, size: 16),
-                    label: const Text('Export ZIP'),
+                    label: Text(files.length > 1 ? 'Export ZIP (${files.length})' : 'Export ZIP'),
                     style: TextButton.styleFrom(
                       foregroundColor: widget.palette.primary,
                       visualDensity: VisualDensity.compact,
@@ -2092,8 +2091,16 @@ class _MarkdownMessageState extends State<_MarkdownMessage> {
             ),
           ),
 
-        if (_showPreview && files != null && hasHtmlFiles)
-          SizedBox(height: 500, child: ArtifactPreview(files: files))
+        if (showArtifactUI && isPreviewActive && hasWebArtifact)
+          Container(
+            height: 520,
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: widget.palette.outline),
+            ),
+            child: ArtifactPreview(files: files),
+          )
         else
           ...parts.map((part) {
             if (part.isCode) {
@@ -3243,10 +3250,35 @@ class _InputPod extends StatelessWidget {
                 icon: LucideIcons.sparkles,
                 size: 30,
                 iconSize: 17,
+                tooltip: 'Artifact Mode: ${app.isArtifactMode ? "On" : "Off"}',
                 color: app.isArtifactMode
                     ? const Color(0xffc084fc)
                     : p.onSurface,
                 onPressed: app.toggleArtifactMode,
+              ),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: input,
+                builder: (context, val, _) {
+                  final text = val.text.trim();
+                  final isImageActive = text.toLowerCase().startsWith('/image');
+                  return RoundIconButton(
+                    icon: LucideIcons.image,
+                    size: 30,
+                    iconSize: 17,
+                    tooltip: 'Generate / Edit image (/image)',
+                    color: isImageActive ? p.primary : p.onSurface,
+                    onPressed: () {
+                      if (isImageActive) {
+                        input.text = text.replaceFirst(RegExp(r'^/image\s*', caseSensitive: false), '');
+                      } else {
+                        input.text = '/image $text'.trim();
+                      }
+                      input.selection = TextSelection.fromPosition(
+                        TextPosition(offset: input.text.length),
+                      );
+                    },
+                  );
+                },
               ),
               const SizedBox(width: 12),
               Builder(
@@ -3438,26 +3470,9 @@ class _InputPod extends StatelessWidget {
             children: [
               RoundIconButton(
                 icon: LucideIcons.plus,
+                tooltip: 'Add attachment',
                 onPressed: onPick,
                 color: p.onSurface,
-              ),
-              RoundIconButton(
-                icon: LucideIcons.image,
-                tooltip: 'Generate / Edit image (/image)',
-                onPressed: () {
-                  final text = input.text.trim();
-                  if (text.toLowerCase().startsWith('/image')) {
-                    input.text = text.replaceFirst(RegExp(r'^/image\s*', caseSensitive: false), '');
-                  } else {
-                    input.text = '/image $text'.trim();
-                  }
-                  input.selection = TextSelection.fromPosition(
-                    TextPosition(offset: input.text.length),
-                  );
-                },
-                color: input.text.trim().toLowerCase().startsWith('/image')
-                    ? p.primary
-                    : p.onSurface,
               ),
               Expanded(
                 child: Container(

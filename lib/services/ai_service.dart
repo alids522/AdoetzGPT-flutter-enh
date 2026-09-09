@@ -3015,8 +3015,32 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
     throw Exception('Failed to generate image after $maxAttempts attempts.');
   }
 
-  static const _artifactInstruction =
-      '\n\nARTIFACT MODE ENABLED: Create complete multi-file web projects. Start every code block with a file header comment such as // file: path/name.ext or <!-- file: path/name.html -->. Provide full file contents.';
+  static const _artifactInstruction = '''
+
+
+ARTIFACT MODE ENABLED:
+You are an expert full-stack engineer and visual designer crafting interactive web apps, dashboards, components, and visual artifacts.
+Follow these mandatory architectural principles:
+1. MODULAR MULTI-FILE ARCHITECTURE:
+   Split web applications into clean, interconnected modular files (e.g. index.html, styles.css, script.js, about.html, etc.).
+2. FILE IDENTIFIER HEADERS:
+   Start every single code block on line 1 with an explicit file header comment or markdown fence attribute:
+   - For HTML: <!-- file: index.html -->
+   - For CSS: /* file: styles.css */
+   - For JavaScript: // file: script.js
+   - For SVG: <!-- file: diagram.svg -->
+   - For Python/Bash/YAML: # file: filename.ext
+   Or use: ```html filename="index.html"
+3. SEAMLESS INTERCONNECTION:
+   - In index.html, always link styles.css (<link rel="stylesheet" href="styles.css">) and script.js (<script src="script.js"></script>).
+   - Multi-page navigation must use relative hrefs (<a href="about.html">About</a>) and in-page sections (<a href="#features">Features</a>).
+4. MODERN UI, TAILWIND & CDNs:
+   - Include Tailwind CSS via CDN in HTML files: <script src="https://cdn.tailwindcss.com"></script>
+   - Include icons via CDN (e.g. Lucide Icons <script src="https://unpkg.com/lucide@latest"></script> or FontAwesome) and Google Fonts.
+   - For interactive charts, include Chart.js (<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>).
+5. 100% COMPLETE CODE:
+   - Never truncate, omit, or write comments like "// rest of code remains the same". Write full, runnable files.
+''';
 }
 
 class ParsedText {
