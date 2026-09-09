@@ -3930,33 +3930,68 @@ class _VoiceOverlay extends StatelessWidget {
                 ),
                 SizedBox(width: compact ? 8 : 16),
               ] else ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: p.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: p.primary.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        isTranscribe ? LucideIcons.speech : LucideIcons.languages,
-                        size: 14,
-                        color: p.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        isTranscribe
-                            ? 'Transcribe'
-                            : 'Translate (${app.liveTranslateTargetLanguage.toUpperCase()})',
-                        style: TextStyle(
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: isTranslate
+                      ? () async {
+                          final chosen = await showDialog<String>(
+                            context: context,
+                            builder: (ctx) => SimpleDialog(
+                              title: const Text('Select Target Language'),
+                              children: [
+                                'en', 'id', 'es', 'fr', 'de', 'ja', 'ko', 'zh', 'ar', 'ru', 'pt', 'it'
+                              ].map((lang) => SimpleDialogOption(
+                                onPressed: () => Navigator.pop(ctx, lang),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(lang.toUpperCase()),
+                                    if (lang == app.liveTranslateTargetLanguage)
+                                      Icon(LucideIcons.check, size: 16, color: p.primary),
+                                  ],
+                                ),
+                              )).toList(),
+                            ),
+                          );
+                          if (chosen != null && chosen != app.liveTranslateTargetLanguage) {
+                            app.setLiveTranslateTargetLanguage(chosen);
+                            await app.stopLiveConversation();
+                            await app.startLiveTranslate(targetLang: chosen);
+                          }
+                        }
+                      : null,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: p.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: p.primary.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isTranscribe ? LucideIcons.speech : LucideIcons.languages,
+                          size: 14,
                           color: p.primary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Text(
+                          isTranscribe
+                              ? 'Transcribe'
+                              : 'Translate (${app.liveTranslateTargetLanguage.toUpperCase()})',
+                          style: TextStyle(
+                            color: p.primary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (isTranslate) ...[
+                          const SizedBox(width: 4),
+                          Icon(LucideIcons.chevronDown, size: 12, color: p.primary),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
                 SizedBox(width: compact ? 8 : 12),

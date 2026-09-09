@@ -43,9 +43,10 @@ class GeminiLiveService {
     this.translationConfig,
     this.audioTranscriptionConfig,
     this.contextWindowCompression,
+    this.muteAudioOutput = false,
   });
 
-  static const _inputSampleRate = 24000;
+  static const _inputSampleRate = 16000;
   static const _outputSampleRate = 24000;
   static const _outputLevelWindow = Duration(milliseconds: 80);
   static const _inputMimeType = 'audio/pcm;rate=$_inputSampleRate';
@@ -68,7 +69,7 @@ class GeminiLiveService {
   final LiveVoidCallback onTurnComplete;
   final LiveErrorCallback onError;
   final LiveVoidCallback onClosed;
-  
+
   final List<Map<String, dynamic>>? tools;
   final String? systemInstructionOverride;
   final Future<Map<String, dynamic>> Function(String name, Map<String, dynamic> args)? onToolCall;
@@ -76,6 +77,7 @@ class GeminiLiveService {
   final Map<String, dynamic>? translationConfig;
   final Map<String, dynamic>? audioTranscriptionConfig;
   final Map<String, dynamic>? contextWindowCompression;
+  final bool muteAudioOutput;
 
   final _recorder = AudioRecorder();
   final _player = LiveAudioPlayer();
@@ -130,7 +132,9 @@ class GeminiLiveService {
       ),
     );
 
-    await _player.start(sampleRate: _outputSampleRate);
+    if (!muteAudioOutput) {
+      await _player.start(sampleRate: _outputSampleRate);
+    }
     onStatus('Listening...');
     await setRecording(true);
   }
@@ -202,7 +206,9 @@ class GeminiLiveService {
       await _channel?.sink.close();
     } catch (_) {}
     _channel = null;
-    await _player.stop();
+    if (!muteAudioOutput) {
+      await _player.stop();
+    }
     onLevel(0);
     onOutputLevel(0);
     onStatus('');
@@ -229,12 +235,17 @@ class GeminiLiveService {
                 'prebuiltVoiceConfig': {'voiceName': _voiceName()},
               },
             },
-          if (contextWindowCompression != null)
-            'contextWindowCompression': contextWindowCompression,
+          if (translationConfig != null) 'translationConfig': {
+            'targetLanguageCode': translationConfig!['targetLanguageCode'] ?? 'en',
+            'echoTargetLanguage': translationConfig!['echoTargetLanguage'] ?? false,
+          },
         },
-        if (translationConfig != null) 'translationConfig': translationConfig,
-        if (audioTranscriptionConfig != null)
-          'audioTranscriptionConfig': audioTranscriptionConfig,
+        if (contextWindowCompression != null)
+          'contextWindowCompression': contextWindowCompression,
+        'inputAudioTranscription': audioTranscriptionConfig ?? <String, dynamic>{
+          'mode': 'VERBATIM',
+        },
+        'outputAudioTranscription': <String, dynamic>{},
         'systemInstruction': {
           'parts': [
             {'text': systemInstructionOverride ?? _systemInstruction()},
@@ -260,14 +271,26 @@ class GeminiLiveService {
 
       final serverContent = data['serverContent'];
       if (serverContent is Map<String, dynamic>) {
-        _handleTranscription(
-          serverContent['inputTranscription'],
-          onInputTranscript,
-        );
-        _handleTranscription(
-          serverContent['outputTranscription'],
-          onOutputTranscript,
-        );
+        if (serverContent['interimInputTranscription'] != null) {
+          _handleTranscription(
+            serverContent['interimInputTranscription'],
+            onInputTranscript,
+            forceFinished: false,
+          );
+        }
+        if (serverContent['inputTranscription'] != null) {
+          _handleTranscription(
+            serverContent['inputTranscription'],
+            onInputTranscript,
+            forceFinished: true,
+          );
+        }
+        if (serverContent['outputTranscription'] != null) {
+          _handleTranscription(
+            serverContent['outputTranscription'],
+            onOutputTranscript,
+          );
+        }
 
         final modelTurn = serverContent['modelTurn'];
         if (modelTurn is Map<String, dynamic>) {
@@ -284,7 +307,9 @@ class GeminiLiveService {
                 if (encoded.isNotEmpty) {
                   final bytes = base64Decode(encoded);
                   _scheduleOutputLevels(bytes);
-                  _player.playPcm16(bytes, sampleRate: _outputSampleRate);
+                  if (!muteAudioOutput) {
+                    _player.playPcm16(bytes, sampleRate: _outputSampleRate);
+                  }
                 }
               }
             }
@@ -365,11 +390,22 @@ class GeminiLiveService {
     }
   }
 
-  void _handleTranscription(dynamic value, LiveTranscriptCallback callback) {
+  void _handleTranscription(
+    dynamic value,
+    LiveTranscriptCallback callback, {
+    bool? forceFinished,
+  }) {
+    if (value is List) {
+      for (final item in value) {
+        _handleTranscription(item, callback, forceFinished: forceFinished);
+      }
+      return;
+    }
     if (value is! Map) return;
     final text = stringValue(value['text']);
     if (text.isEmpty) return;
-    callback(text, value['finished'] == true);
+    final finished = forceFinished ?? (value['finished'] == true);
+    callback(text, finished);
   }
 
   void _handleDone() {
@@ -524,7 +560,7 @@ class GeminiLiveService {
   String _formatLiveModel(String value) {
     final trimmed = value.trim();
     final resolved = trimmed.isEmpty
-        ? 'gemini-3.1-flash-live-preview'
+        ? 'gemini-2.5-flash-native-audio-preview-12-2025'
         : trimmed;
     return resolved.startsWith('models/') ? resolved : 'models/$resolved';
   }

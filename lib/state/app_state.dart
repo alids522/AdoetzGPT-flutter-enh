@@ -2682,54 +2682,48 @@ class AdoetzAppState extends ChangeNotifier {
       liveTranslateSourceLanguage = sourceLanguage;
     }
 
-    final List<String> liveModels;
-    final List<String> responseModalities;
+    final List<String> liveModels = _liveModelCandidates();
+    final List<String> responseModalities = const ['AUDIO'];
     final Map<String, dynamic>? translationConfig;
     final Map<String, dynamic>? audioTranscriptionConfig;
     final Map<String, dynamic>? contextWindowCompression;
     final String? customSysInstruction;
+    final bool muteAudio;
 
     if (mode == LiveSpeechMode.transcribe) {
-      liveModels = [
-        'models/gemini-3.5-transcribe-live',
-        'gemini-3.5-transcribe-live',
-        'gemini-3.1-flash-live-preview',
-      ];
-      responseModalities = ['TEXT'];
       translationConfig = null;
-      audioTranscriptionConfig = null;
-      contextWindowCompression = {
-        'triggerTokens': '104857',
-        'slidingWindow': {'targetTokens': '52428'},
+      audioTranscriptionConfig = const {
+        'mode': 'VERBATIM',
+      };
+      contextWindowCompression = const {
+        'triggerTokens': 104857,
+        'slidingWindow': {'targetTokens': 52428},
       };
       customSysInstruction =
-          'You are a real-time voice transcription engine. Transcribe the incoming user audio accurately and continuously with no conversational filler or commentary.';
+          'You are a real-time voice transcription engine. Transcribe the incoming user audio accurately and continuously. Maintain silence and do not reply or converse.';
+      muteAudio = true;
     } else if (mode == LiveSpeechMode.translate) {
-      liveModels = [
-        'models/gemini-3.5-live-translate-preview',
-        'gemini-3.5-live-translate-preview',
-        'gemini-3.1-flash-live-preview',
-      ];
-      responseModalities = ['AUDIO'];
       translationConfig = {
         'targetLanguageCode': liveTranslateTargetLanguage,
+        'echoTargetLanguage': false,
       };
       audioTranscriptionConfig = {
-        'languageCodes': [liveTranslateSourceLanguage],
+        if (liveTranslateSourceLanguage.isNotEmpty && liveTranslateSourceLanguage != 'auto')
+          'languageCodes': [liveTranslateSourceLanguage],
+        'mode': 'VERBATIM',
       };
-      contextWindowCompression = {
-        'triggerTokens': '0',
-        'slidingWindow': {'targetTokens': '0'},
-      };
+      contextWindowCompression = null;
       customSysInstruction =
-          'You are a real-time bidirectional live translator. Translate everything the speaker says immediately into ${liveTranslateTargetLanguage.toUpperCase()}. Speak the translation in natural fluent speech without extra preamble.';
+          'You are a real-time bidirectional live translator. Translate everything the speaker says immediately into ${liveTranslateTargetLanguage.toUpperCase()}. Speak the translation directly in natural fluent speech without conversational filler or preamble.';
+      muteAudio = false;
     } else {
-      liveModels = _liveModelCandidates();
-      responseModalities = ['AUDIO'];
       translationConfig = null;
-      audioTranscriptionConfig = null;
+      audioTranscriptionConfig = const {
+        'mode': 'VERBATIM',
+      };
       contextWindowCompression = null;
       customSysInstruction = null;
+      muteAudio = false;
     }
 
     _liveSessionId = currentSession.id;
@@ -2824,6 +2818,7 @@ class AdoetzAppState extends ChangeNotifier {
         audioTranscriptionConfig: audioTranscriptionConfig,
         contextWindowCompression: contextWindowCompression,
         systemInstructionOverride: liveSystemInstruction,
+        muteAudioOutput: muteAudio,
         tools: liveTools.isNotEmpty ? liveTools : null,
         onToolCall: liveTools.isNotEmpty ? (name, args) async {
             if (name == 'query_openclaw_agent') {
@@ -2992,11 +2987,11 @@ class AdoetzAppState extends ChangeNotifier {
     await startLiveConversation(mode: LiveSpeechMode.transcribe);
   }
 
-  Future<void> startLiveTranslate({String targetLang = 'en', String sourceLang = 'en'}) async {
+  Future<void> startLiveTranslate({String? targetLang, String? sourceLang}) async {
     await startLiveConversation(
       mode: LiveSpeechMode.translate,
-      targetLanguage: targetLang,
-      sourceLanguage: sourceLang,
+      targetLanguage: targetLang ?? liveTranslateTargetLanguage,
+      sourceLanguage: sourceLang ?? liveTranslateSourceLanguage,
     );
   }
 
@@ -4213,11 +4208,13 @@ class AdoetzAppState extends ChangeNotifier {
     final candidates = [
       if (customLive.isNotEmpty) customLive,
       if (_isLiveCapableModel(selected)) selected,
-      'gemini-3.1-flash-live-preview',
       'gemini-2.5-flash-native-audio-preview-12-2025',
+      'gemini-2.0-flash-exp',
+      'gemini-live-2.5-flash-preview',
+      'gemini-2.5-flash-native-audio-preview-09-2025',
+      'gemini-3.1-flash-live-preview',
       ...models,
       ...geminiModels,
-      'gemini-live-2.5-flash-preview',
     ].where(_isLiveCapableModel);
     final seen = <String>{};
     return candidates.where((model) => seen.add(model)).toList();
@@ -4225,7 +4222,11 @@ class AdoetzAppState extends ChangeNotifier {
 
   bool _isLiveCapableModel(String model) {
     final value = model.toLowerCase();
-    return value.contains('live') || value.contains('native-audio');
+    return value.contains('live') ||
+        value.contains('native-audio') ||
+        value.contains('flash-exp') ||
+        value == 'gemini-2.0-flash' ||
+        value.contains('realtime');
   }
 
   Future<void> _startLiveForegroundService() async {
