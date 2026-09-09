@@ -996,12 +996,14 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
               final argsMap = toolArgs.isEmpty
                   ? <String, dynamic>{}
                   : (jsonDecode(toolArgs) as Map? ?? <String, dynamic>{});
+              final provider = toolName.startsWith('github_') ? 'github' : 'google';
               final toolResult = await pluginService.executeTool(
                 backendUrl: backendUrl ?? 'http://localhost:3000',
                 tool: toolName,
                 parameters: Map<String, dynamic>.from(argsMap),
                 authToken: authToken,
                 userId: userId,
+                oAuthStatus: pluginOAuthStatus?[provider],
               );
               final outputStr = jsonEncode(toolResult);
               final logEnd = '\n```json\n$outputStr\n```\n</think>\n\n';
@@ -1336,12 +1338,14 @@ Do not explain that you lack tools. Just output the <exec> block! The system wil
           } catch (_) {}
 
           try {
+            final provider = toolName.startsWith('github_') ? 'github' : 'google';
             final toolResult = await pluginService.executeTool(
               backendUrl: backendUrl ?? 'http://localhost:3000',
               tool: toolName,
               parameters: argsMap,
               authToken: authToken,
               userId: userId,
+              oAuthStatus: pluginOAuthStatus?[provider],
             );
             final outputStr = jsonEncode(toolResult);
             final logEnd = '\n```json\n$outputStr\n```\n</think>\n\n';

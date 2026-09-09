@@ -1957,6 +1957,9 @@ class OAuthProviderStatus {
     this.avatarUrl,
     this.expiresAt,
     this.scopes,
+    this.accessToken,
+    this.refreshToken,
+    this.tokenType,
   });
 
   final bool connected;
@@ -1966,6 +1969,9 @@ class OAuthProviderStatus {
   final String? avatarUrl;
   final int? expiresAt;
   final String? scopes;
+  final String? accessToken;
+  final String? refreshToken;
+  final String? tokenType;
 
   factory OAuthProviderStatus.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const OAuthProviderStatus();
@@ -1977,10 +1983,13 @@ class OAuthProviderStatus {
       avatarUrl: (json['avatarUrl'] ?? json['avatar_url']) as String?,
       expiresAt: json['expiresAt'] != null ? intValue(json['expiresAt']) : null,
       scopes: json['scopes'] as String?,
+      accessToken: (json['accessToken'] ?? json['access_token']) as String?,
+      refreshToken: (json['refreshToken'] ?? json['refresh_token']) as String?,
+      tokenType: (json['tokenType'] ?? json['token_type']) as String?,
     );
   }
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeTokens = true}) => {
     'connected': connected,
     if (email != null) 'email': email,
     if (name != null) 'name': name,
@@ -1988,6 +1997,9 @@ class OAuthProviderStatus {
     if (avatarUrl != null) 'avatarUrl': avatarUrl,
     if (expiresAt != null) 'expiresAt': expiresAt,
     if (scopes != null) 'scopes': scopes,
+    if (includeTokens && accessToken != null) 'accessToken': accessToken,
+    if (includeTokens && refreshToken != null) 'refreshToken': refreshToken,
+    if (includeTokens && tokenType != null) 'tokenType': tokenType,
   };
 
   OAuthProviderStatus copyWith({
@@ -1998,6 +2010,9 @@ class OAuthProviderStatus {
     String? avatarUrl,
     int? expiresAt,
     String? scopes,
+    String? accessToken,
+    String? refreshToken,
+    String? tokenType,
   }) {
     return OAuthProviderStatus(
       connected: connected ?? this.connected,
@@ -2007,6 +2022,9 @@ class OAuthProviderStatus {
       avatarUrl: avatarUrl ?? this.avatarUrl,
       expiresAt: expiresAt ?? this.expiresAt,
       scopes: scopes ?? this.scopes,
+      accessToken: accessToken ?? this.accessToken,
+      refreshToken: refreshToken ?? this.refreshToken,
+      tokenType: tokenType ?? this.tokenType,
     );
   }
 }
@@ -2115,6 +2133,7 @@ class PersistedAppState {
     this.personas = const [],
     this.pluginEnabledStates = defaultPluginEnabledStates,
     this.oauthAppConfigs = const [],
+    this.pluginOAuthStatus = const {},
     required this.soundEffectsEnabled,
     required this.isLiveVideoEnabled,
     required this.isLiveFrontCamera,
@@ -2164,6 +2183,7 @@ class PersistedAppState {
   final List<PersonaProfile> personas;
   final Map<String, bool> pluginEnabledStates;
   final List<OAuthAppConfig> oauthAppConfigs;
+  final Map<String, OAuthProviderStatus> pluginOAuthStatus;
   final bool soundEffectsEnabled;
   final bool isLiveVideoEnabled;
   final bool isLiveFrontCamera;
@@ -2211,6 +2231,7 @@ class PersistedAppState {
       personas: const [],
       pluginEnabledStates: PersistedAppState.defaultPluginEnabledStates,
       oauthAppConfigs: const [],
+      pluginOAuthStatus: const {},
       soundEffectsEnabled: true,
       isLiveVideoEnabled: false,
       isLiveFrontCamera: false,
@@ -2305,6 +2326,16 @@ class PersistedAppState {
       oauthAppConfigs: mapList(
         json['oauthAppConfigs'] ?? json['oauth_app_configs'],
       ).map(OAuthAppConfig.fromJson).toList(),
+      pluginOAuthStatus: json['pluginOAuthStatus'] is Map
+          ? (json['pluginOAuthStatus'] as Map).map(
+              (k, v) => MapEntry(
+                k.toString(),
+                OAuthProviderStatus.fromJson(
+                  v is Map ? Map<String, dynamic>.from(v) : null,
+                ),
+              ),
+            )
+          : const {},
       soundEffectsEnabled: boolValue(json['soundEffectsEnabled'], true),
       isLiveVideoEnabled: boolValue(json['isLiveVideoEnabled']),
       isLiveFrontCamera: boolValue(json['isLiveFrontCamera']),
@@ -2356,6 +2387,9 @@ class PersistedAppState {
     'oauthAppConfigs': oauthAppConfigs
         .map((item) => item.toJson(includeSecret: includeSecrets))
         .toList(),
+    'pluginOAuthStatus': pluginOAuthStatus.map(
+      (k, v) => MapEntry(k, v.toJson(includeTokens: includeSecrets)),
+    ),
     'soundEffectsEnabled': soundEffectsEnabled,
     'isLiveVideoEnabled': isLiveVideoEnabled,
     'isLiveFrontCamera': isLiveFrontCamera,
@@ -2395,6 +2429,7 @@ class PersistedAppState {
     List<PersonaProfile>? personas,
     Map<String, bool>? pluginEnabledStates,
     List<OAuthAppConfig>? oauthAppConfigs,
+    Map<String, OAuthProviderStatus>? pluginOAuthStatus,
     bool? soundEffectsEnabled,
     bool? isLiveVideoEnabled,
     bool? isLiveFrontCamera,
@@ -2434,6 +2469,7 @@ class PersistedAppState {
       personas: personas ?? this.personas,
       pluginEnabledStates: pluginEnabledStates ?? this.pluginEnabledStates,
       oauthAppConfigs: oauthAppConfigs ?? this.oauthAppConfigs,
+      pluginOAuthStatus: pluginOAuthStatus ?? this.pluginOAuthStatus,
       soundEffectsEnabled: soundEffectsEnabled ?? this.soundEffectsEnabled,
       isLiveVideoEnabled: isLiveVideoEnabled ?? this.isLiveVideoEnabled,
       isLiveFrontCamera: isLiveFrontCamera ?? this.isLiveFrontCamera,

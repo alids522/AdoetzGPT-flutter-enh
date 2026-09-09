@@ -423,6 +423,7 @@ class AdoetzAppState extends ChangeNotifier {
       personas: personas,
       pluginEnabledStates: pluginEnabledStates,
       oauthAppConfigs: oauthAppConfigs,
+      pluginOAuthStatus: pluginOAuthStatus,
       lastSyncAt: lastSyncAt,
       savedAt: savedAt,
     );
@@ -469,6 +470,15 @@ class AdoetzAppState extends ChangeNotifier {
     personas = state.personas;
     pluginEnabledStates = state.pluginEnabledStates;
     oauthAppConfigs = state.oauthAppConfigs;
+    if (state.pluginOAuthStatus.isNotEmpty) {
+      final mergedStatus = Map<String, OAuthProviderStatus>.from(pluginOAuthStatus);
+      for (final entry in state.pluginOAuthStatus.entries) {
+        if (entry.value.connected || (mergedStatus[entry.key]?.connected != true)) {
+          mergedStatus[entry.key] = entry.value;
+        }
+      }
+      pluginOAuthStatus = mergedStatus;
+    }
     if (notify) notifyListeners();
   }
 
@@ -638,6 +648,10 @@ class AdoetzAppState extends ChangeNotifier {
         local.oauthAppConfigs,
         remote.oauthAppConfigs,
         preferRemote: remoteIsNewer,
+      ),
+      pluginOAuthStatus: _mergeOAuthProviderStatuses(
+        local.pluginOAuthStatus,
+        remote.pluginOAuthStatus,
       ),
       lastSyncAt: local.lastSyncAt,
       savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
@@ -984,6 +998,30 @@ class AdoetzAppState extends ChangeNotifier {
     return 'oauth:$provider|$name';
   }
 
+  Map<String, OAuthProviderStatus> _mergeOAuthProviderStatuses(
+    Map<String, OAuthProviderStatus> local,
+    Map<String, OAuthProviderStatus> remote,
+  ) {
+    final result = Map<String, OAuthProviderStatus>.from(local);
+    for (final entry in remote.entries) {
+      final loc = result[entry.key];
+      if (loc == null || !loc.connected) {
+        result[entry.key] = entry.value;
+      } else if (entry.value.connected) {
+        final locHasTokens = loc.accessToken != null && loc.accessToken!.isNotEmpty;
+        final remHasTokens = entry.value.accessToken != null && entry.value.accessToken!.isNotEmpty;
+        if (!locHasTokens && remHasTokens) {
+          result[entry.key] = entry.value;
+        } else if (locHasTokens && remHasTokens) {
+          if ((entry.value.expiresAt ?? 0) > (loc.expiresAt ?? 0)) {
+            result[entry.key] = entry.value;
+          }
+        }
+      }
+    }
+    return result;
+  }
+
   String _agentConnectorMergeKey(AgentConnector connector) {
     if (connector.id.trim().isNotEmpty) return 'id:${connector.id.trim()}';
     final name = connector.name.trim().toLowerCase();
@@ -1259,7 +1297,22 @@ class AdoetzAppState extends ChangeNotifier {
         authToken: authToken,
         userId: currentUser?.id,
       );
-      pluginOAuthStatus = statuses;
+      // Smart merge so backend status does not overwrite locally stored valid tokens
+      final merged = Map<String, OAuthProviderStatus>.from(pluginOAuthStatus);
+      for (final entry in statuses.entries) {
+        final existing = merged[entry.key];
+        if (existing == null || !existing.connected) {
+          merged[entry.key] = entry.value;
+        } else if (entry.value.connected) {
+          merged[entry.key] = existing.copyWith(
+            email: existing.email ?? entry.value.email,
+            name: existing.name ?? entry.value.name,
+            avatarUrl: existing.avatarUrl ?? entry.value.avatarUrl,
+            username: existing.username ?? entry.value.username,
+          );
+        }
+      }
+      pluginOAuthStatus = merged;
     } catch (e) {
       debugPrint('Error refreshing plugin OAuth status: $e');
     } finally {
@@ -1269,6 +1322,37 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   Future<void> connectOAuthProvider(String provider) async {
+    final activeApp = activeOAuthApp(provider);
+
+    // Standalone Mobile/Desktop Flow: Use PKCE and local loopback server
+    if (!kIsWeb && activeApp != null && activeApp.clientId.isNotEmpty) {
+      try {
+        isCheckingPluginOAuth = true;
+        notifyListeners();
+
+        final status = await PluginService.instance.connectProviderStandalone(
+          provider,
+          activeApp,
+          onStatusMessage: (msg) {
+            debugPrint('[Standalone OAuth] $msg');
+          },
+        );
+
+        final updated = Map<String, OAuthProviderStatus>.from(pluginOAuthStatus);
+        updated[provider.toLowerCase()] = status;
+        pluginOAuthStatus = updated;
+        notifyListeners();
+        await _persistAndScheduleRemote();
+        return;
+      } catch (e) {
+        debugPrint('Standalone OAuth error: $e');
+      } finally {
+        isCheckingPluginOAuth = false;
+        notifyListeners();
+      }
+    }
+
+    // Web or Backend Assisted Fallback Flow
     final authUrl = PluginService.instance.getAuthorizeUrl(
       backendUrl,
       provider,
@@ -1298,14 +1382,24 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   Future<bool> disconnectOAuthProvider(String provider) async {
-    final ok = await PluginService.instance.disconnectProvider(
-      backendUrl,
-      provider,
-      authToken: authToken,
-      userId: currentUser?.id,
-    );
-    await refreshPluginOAuthStatus();
-    return ok;
+    // Immediately clear local status and tokens
+    final updated = Map<String, OAuthProviderStatus>.from(pluginOAuthStatus);
+    updated[provider.toLowerCase()] = const OAuthProviderStatus();
+    pluginOAuthStatus = updated;
+    notifyListeners();
+    await _persistAndScheduleRemote();
+
+    // Also notify backend if reachable
+    try {
+      await PluginService.instance.disconnectProvider(
+        backendUrl,
+        provider,
+        authToken: authToken,
+        userId: currentUser?.id,
+      );
+    } catch (_) {}
+
+    return true;
   }
 
   OAuthAppConfig? activeOAuthApp(String provider) {
@@ -2766,12 +2860,24 @@ class AdoetzAppState extends ChangeNotifier {
 
             if (PluginService.instance.isPluginTool(name)) {
               try {
+                final provider = name.startsWith('github_') ? 'github' : 'google';
+                final oAuthStatus = pluginOAuthStatus[provider];
+                final activeApp = activeOAuthApp(provider);
                 final result = await PluginService.instance.executeTool(
                   backendUrl: backendUrl,
                   tool: name,
                   parameters: args,
                   authToken: authToken,
                   userId: currentUser?.id,
+                  oAuthStatus: oAuthStatus,
+                  oAuthAppConfig: activeApp,
+                  onTokenRefreshed: (updated) {
+                    final newMap = Map<String, OAuthProviderStatus>.from(pluginOAuthStatus);
+                    newMap[provider] = updated;
+                    pluginOAuthStatus = newMap;
+                    notifyListeners();
+                    _persist();
+                  },
                 );
                 return result;
               } catch (e) {

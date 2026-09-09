@@ -75,6 +75,7 @@ dependencies:
   supabase_flutter: ^2.14.2
   mp_audio_stream: ^0.2.2
   mcp_dart: ^2.2.1
+  crypto: ^3.0.6
 dev_dependencies:
   flutter_test:
     sdk: flutter
