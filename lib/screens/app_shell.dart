@@ -1133,7 +1133,7 @@ class _AppDrawerState extends State<_AppDrawer> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  app.userName,
+                                  app.effectiveDisplayName,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -1143,9 +1143,11 @@ class _AppDrawerState extends State<_AppDrawer> {
                                   ),
                                 ),
                                 Text(
-                                  copy
-                                      .t('sidebar', 'verifiedUser')
-                                      .toUpperCase(),
+                                  app.currentUser?.isGuest == true
+                                      ? 'GUEST'
+                                      : copy
+                                          .t('sidebar', 'verifiedUser')
+                                          .toUpperCase(),
                                   style: const TextStyle(
                                     color: Color(0xff60a5fa),
                                     fontSize: 10,

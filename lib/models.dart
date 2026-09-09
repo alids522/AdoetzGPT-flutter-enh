@@ -1738,6 +1738,20 @@ class UserAccount {
     'displayName': displayName ?? username,
     if (isGuest) 'isGuest': true,
   };
+
+  UserAccount copyWith({
+    String? id,
+    String? username,
+    String? email,
+    String? displayName,
+    bool? isGuest,
+  }) => UserAccount(
+    id: id ?? this.id,
+    username: username ?? this.username,
+    email: email ?? this.email,
+    displayName: displayName ?? this.displayName,
+    isGuest: isGuest ?? this.isGuest,
+  );
 }
 
 class DatabaseSettings {
@@ -2245,12 +2259,20 @@ class PersistedAppState {
   }) {
     final sessions = mapList(json['sessions']).map(Session.fromJson).toList();
     final defaults = PersistedAppState.defaults();
+    final parsedUser = json['currentUser'] == null
+        ? null
+        : UserAccount.fromJson(
+            Map<String, dynamic>.from(json['currentUser']),
+          );
+    final rawUserName = stringValue(json['userName']);
+    final resolvedUserName = (rawUserName.isNotEmpty && rawUserName != 'User')
+        ? rawUserName
+        : (parsedUser != null && !parsedUser.isGuest && parsedUser.label.isNotEmpty
+            ? parsedUser.label
+            : stringValue(rawUserName, defaults.userName));
+
     return PersistedAppState(
-      currentUser: json['currentUser'] == null
-          ? null
-          : UserAccount.fromJson(
-              Map<String, dynamic>.from(json['currentUser']),
-            ),
+      currentUser: parsedUser,
       authToken: stringValue(json['authToken']),
       syncSettings: SyncSettings.fromJson(
         json['syncSettings'] is Map
@@ -2267,7 +2289,7 @@ class PersistedAppState {
       ),
       isThinkingMode: boolValue(json['isThinkingMode']),
       isArtifactMode: boolValue(json['isArtifactMode']),
-      userName: stringValue(json['userName'], defaults.userName),
+      userName: resolvedUserName,
       geminiApiKey: stringValue(json['geminiApiKey']),
       endpoints: mapList(
         json['endpoints'],

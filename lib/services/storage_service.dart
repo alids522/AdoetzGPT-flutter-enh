@@ -28,6 +28,12 @@ class StorageService {
               userName: user.label,
             );
           }
+        } else if (parsed.currentUser != null &&
+            !parsed.currentUser!.isGuest &&
+            (parsed.userName.isEmpty || parsed.userName == 'User')) {
+          parsed = parsed.copyWith(
+            userName: parsed.currentUser!.label,
+          );
         }
         return parsed;
       }

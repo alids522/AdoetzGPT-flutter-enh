@@ -112,7 +112,21 @@ class AdoetzAppState extends ChangeNotifier {
   UserAccount? currentUser;
   String authToken = '';
   SyncSettings syncSettings = const SyncSettings();
-  String userName = 'User';
+  String _userName = 'User';
+  String get userName {
+    if (_userName.isNotEmpty && _userName != 'User') {
+      return _userName;
+    }
+    if (currentUser != null && !currentUser!.isGuest && currentUser!.label.isNotEmpty) {
+      return currentUser!.label;
+    }
+    return _userName;
+  }
+  set userName(String value) {
+    _userName = value;
+  }
+
+  String get effectiveDisplayName => userName;
   String geminiApiKey = '';
   List<EndpointConfig> endpoints = const [
     EndpointConfig(
@@ -448,7 +462,17 @@ class AdoetzAppState extends ChangeNotifier {
     isLiveVideoEnabled = false;
     isLiveFrontCamera = state.isLiveFrontCamera;
     cachedPasswordHash = state.cachedPasswordHash ?? cachedPasswordHash;
-    userName = state.userName;
+    final rawName = state.userName.trim();
+    final userLabel = state.currentUser != null && !state.currentUser!.isGuest
+        ? state.currentUser!.label.trim()
+        : '';
+    if (rawName.isNotEmpty && rawName != 'User') {
+      userName = rawName;
+    } else if (userLabel.isNotEmpty) {
+      userName = userLabel;
+    } else {
+      userName = rawName.isNotEmpty ? rawName : 'User';
+    }
     geminiApiKey = state.geminiApiKey;
     endpoints = state.endpoints.isEmpty ? endpoints : state.endpoints;
     agentConnectors = state.agentConnectors;
@@ -590,9 +614,30 @@ class AdoetzAppState extends ChangeNotifier {
       isArtifactMode: remoteIsNewer
           ? remote.isArtifactMode
           : local.isArtifactMode,
-      userName: remoteIsNewer && remote.userName.isNotEmpty
-          ? remote.userName
-          : local.userName,
+      userName: () {
+        final localUser = local.currentUser;
+        final remoteUser = remote.currentUser;
+        final localEffective = (local.userName.isNotEmpty && local.userName != 'User')
+            ? local.userName
+            : (localUser != null && !localUser.isGuest && localUser.label.isNotEmpty
+                ? localUser.label
+                : '');
+        final remoteEffective = (remote.userName.isNotEmpty && remote.userName != 'User')
+            ? remote.userName
+            : (remoteUser != null && !remoteUser.isGuest && remoteUser.label.isNotEmpty
+                ? remoteUser.label
+                : '');
+
+        if (remoteIsNewer && remoteEffective.isNotEmpty && remoteEffective != 'User') {
+          return remoteEffective;
+        }
+        if (localEffective.isNotEmpty && localEffective != 'User') {
+          return localEffective;
+        }
+        if (remoteEffective.isNotEmpty) return remoteEffective;
+        if (localEffective.isNotEmpty) return localEffective;
+        return 'User';
+      }(),
       geminiApiKey: remoteIsNewer && remote.geminiApiKey.isNotEmpty
           ? remote.geminiApiKey
           : local.geminiApiKey,
@@ -1062,15 +1107,24 @@ class AdoetzAppState extends ChangeNotifier {
       supabaseUrl: syncSettings.supabaseUrl,
       supabaseAnonKey: syncSettings.supabaseAnonKey,
     );
+    currentUser = result.user;
+    authToken = result.token;
+    syncSettings = nextSync;
+
     if (!signUp &&
         result.remoteState != null &&
         _hasRemoteData(result.remoteState!)) {
       final merged = _mergeRemote(buildState(), result.remoteState!);
+      final resolvedName = (merged.userName.isNotEmpty && merged.userName != 'User')
+          ? merged.userName
+          : result.user.label;
+      userName = resolvedName;
       _applyState(
         PersistedAppState.fromJson({
           ...merged.toJson(includeSecrets: true),
           'currentUser': result.user.toJson(),
           'authToken': result.token,
+          'userName': resolvedName,
           'syncSettings': nextSync.toJson(),
         }),
         notify: false,
@@ -1079,17 +1133,19 @@ class AdoetzAppState extends ChangeNotifier {
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       unawaited(syncOAuthAppsWithBackend());
     } else {
-      currentUser = result.user;
-      authToken = result.token;
       userName = result.user.label;
-      syncSettings = nextSync;
       if (result.remoteState != null) {
         final merged = _mergeRemote(buildState(), result.remoteState!);
+        final resolvedName = (merged.userName.isNotEmpty && merged.userName != 'User')
+            ? merged.userName
+            : result.user.label;
+        userName = resolvedName;
         _applyState(
           PersistedAppState.fromJson({
             ...merged.toJson(includeSecrets: true),
             'currentUser': result.user.toJson(),
             'authToken': result.token,
+            'userName': resolvedName,
             'syncSettings': nextSync.toJson(),
           }),
           notify: false,
@@ -1173,11 +1229,16 @@ class AdoetzAppState extends ChangeNotifier {
 
       if (!isSignUp && result.remoteState != null && _hasRemoteData(result.remoteState!)) {
         final merged = _mergeRemote(buildState(), result.remoteState!);
+        final resolvedName = (merged.userName.isNotEmpty && merged.userName != 'User')
+            ? merged.userName
+            : result.user.label;
+        userName = resolvedName;
         _applyState(
           PersistedAppState.fromJson({
             ...merged.toJson(includeSecrets: true),
             'currentUser': result.user.toJson(),
             'authToken': result.token,
+            'userName': resolvedName,
             'syncSettings': syncSettings.copyWith(enabled: true).toJson(),
           }),
           notify: false,
@@ -3316,7 +3377,12 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   void updateProfile({String? name, AppLanguage? nextLanguage}) {
-    userName = name ?? userName;
+    if (name != null) {
+      userName = name;
+      if (currentUser != null && !currentUser!.isGuest) {
+        currentUser = currentUser!.copyWith(displayName: name);
+      }
+    }
     language = nextLanguage ?? language;
     notifyListeners();
     unawaited(_persistAndScheduleRemote());

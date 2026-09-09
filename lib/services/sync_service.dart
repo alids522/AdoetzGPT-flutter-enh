@@ -69,11 +69,23 @@ class SyncService {
       if (res.user == null || res.session == null) {
         throw Exception('Supabase signup failed. Please ensure you provide a valid email format.');
       }
+      final userMeta = res.user?.userMetadata;
+      final rawDisplayName = userMeta != null
+          ? stringValue(
+              userMeta['displayName'] ??
+                  userMeta['display_name'] ??
+                  userMeta['username'] ??
+                  userMeta['name'] ??
+                  userMeta['full_name'],
+            )
+          : '';
+      final resolvedDisplayName =
+          rawDisplayName.isNotEmpty ? rawDisplayName : username.split('@').first;
       return AuthResult(
         user: UserAccount(
           id: res.user!.id,
           username: username,
-          displayName: username.split('@').first,
+          displayName: resolvedDisplayName,
         ),
         token: res.session!.accessToken,
       );
@@ -120,11 +132,23 @@ class SyncService {
         debugPrint('Failed to pull initial state from Supabase: $e');
       }
 
+      final userMeta = res.user?.userMetadata;
+      final rawDisplayName = userMeta != null
+          ? stringValue(
+              userMeta['displayName'] ??
+                  userMeta['display_name'] ??
+                  userMeta['username'] ??
+                  userMeta['name'] ??
+                  userMeta['full_name'],
+            )
+          : '';
+      final resolvedDisplayName =
+          rawDisplayName.isNotEmpty ? rawDisplayName : username.split('@').first;
       return AuthResult(
         user: UserAccount(
           id: res.user!.id,
           username: username,
-          displayName: username.split('@').first,
+          displayName: resolvedDisplayName,
         ),
         token: res.session!.accessToken,
         remoteState: remoteState,
