@@ -296,6 +296,7 @@ class AdoetzAppState extends ChangeNotifier {
     unawaited(fetchModels());
     unawaited(_persist(touchSavedAt: false));
     unawaited(_pullRemoteStateAfterStartup());
+    unawaited(syncOAuthAppsWithBackend());
     unawaited(_startRealtimeSync());
     unawaited(refreshPluginOAuthStatus());
     
@@ -633,9 +634,11 @@ class AdoetzAppState extends ChangeNotifier {
       pluginEnabledStates: remoteIsNewer
           ? remote.pluginEnabledStates
           : local.pluginEnabledStates,
-      oauthAppConfigs: remoteIsNewer
-          ? remote.oauthAppConfigs
-          : local.oauthAppConfigs,
+      oauthAppConfigs: _mergeOAuthAppConfigs(
+        local.oauthAppConfigs,
+        remote.oauthAppConfigs,
+        preferRemote: remoteIsNewer,
+      ),
       lastSyncAt: local.lastSyncAt,
       savedAt: math.max(local.savedAt ?? 0, remote.savedAt ?? 0),
     );
@@ -918,6 +921,69 @@ class AdoetzAppState extends ChangeNotifier {
     return merged.values.toList();
   }
 
+  List<OAuthAppConfig> _mergeOAuthAppConfigs(
+    List<OAuthAppConfig> local,
+    List<OAuthAppConfig> remote, {
+    required bool preferRemote,
+  }) {
+    if (local.isEmpty) return remote;
+    if (remote.isEmpty) return local;
+
+    final merged = <String, OAuthAppConfig>{};
+    for (final config in local) {
+      merged[_oauthAppConfigMergeKey(config)] = config;
+    }
+    for (final config in remote) {
+      final key = _oauthAppConfigMergeKey(config);
+      var existing = merged[key];
+      var targetKey = key;
+
+      // Fallback matching: If not found by key, see if there is an existing config with the same provider and name
+      if (existing == null) {
+        final match = merged.entries.cast<MapEntry<String, OAuthAppConfig>?>().firstWhere(
+          (e) => e != null &&
+                 e.value.provider.trim().toLowerCase() == config.provider.trim().toLowerCase() &&
+                 e.value.name.trim().toLowerCase() == config.name.trim().toLowerCase(),
+          orElse: () => null,
+        );
+        if (match != null) {
+          existing = match.value;
+          targetKey = match.key;
+        }
+      }
+
+      if (existing == null) {
+        merged[key] = config;
+      } else {
+        final configHasSecret = config.clientSecret.isNotEmpty && !config.clientSecret.contains('••••');
+        final existingHasSecret = existing.clientSecret.isNotEmpty && !existing.clientSecret.contains('••••');
+
+        final String secretToUse;
+        if (configHasSecret && !existingHasSecret) {
+          secretToUse = config.clientSecret;
+        } else if (!configHasSecret && existingHasSecret) {
+          secretToUse = existing.clientSecret;
+        } else {
+          secretToUse = preferRemote ? config.clientSecret : existing.clientSecret;
+        }
+
+        final remoteWins = (config.createdAt ?? 0) > (existing.createdAt ?? 0) || preferRemote;
+        final base = remoteWins ? config : existing;
+        merged[targetKey] = base.copyWith(
+          clientSecret: secretToUse.isNotEmpty ? secretToUse : base.clientSecret,
+        );
+      }
+    }
+    return merged.values.toList();
+  }
+
+  String _oauthAppConfigMergeKey(OAuthAppConfig config) {
+    if (config.id.trim().isNotEmpty) return 'id:${config.id.trim()}';
+    final provider = config.provider.trim().toLowerCase();
+    final name = config.name.trim().toLowerCase();
+    return 'oauth:$provider|$name';
+  }
+
   String _agentConnectorMergeKey(AgentConnector connector) {
     if (connector.id.trim().isNotEmpty) return 'id:${connector.id.trim()}';
     final name = connector.name.trim().toLowerCase();
@@ -961,9 +1027,10 @@ class AdoetzAppState extends ChangeNotifier {
     if (!signUp &&
         result.remoteState != null &&
         _hasRemoteData(result.remoteState!)) {
+      final merged = _mergeRemote(buildState(), result.remoteState!);
       _applyState(
         PersistedAppState.fromJson({
-          ...result.remoteState!.toJson(includeSecrets: true),
+          ...merged.toJson(includeSecrets: true),
           'currentUser': result.user.toJson(),
           'authToken': result.token,
           'syncSettings': nextSync.toJson(),
@@ -972,11 +1039,24 @@ class AdoetzAppState extends ChangeNotifier {
       );
       _clearDirtySyncState();
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      unawaited(syncOAuthAppsWithBackend());
     } else {
       currentUser = result.user;
       authToken = result.token;
       userName = result.user.label;
       syncSettings = nextSync;
+      if (result.remoteState != null) {
+        final merged = _mergeRemote(buildState(), result.remoteState!);
+        _applyState(
+          PersistedAppState.fromJson({
+            ...merged.toJson(includeSecrets: true),
+            'currentUser': result.user.toJson(),
+            'authToken': result.token,
+            'syncSettings': nextSync.toJson(),
+          }),
+          notify: false,
+        );
+      }
       await _sync.pushRemoteState(
         buildState(),
         nextSync,
@@ -984,6 +1064,7 @@ class AdoetzAppState extends ChangeNotifier {
       );
       _clearDirtySyncState();
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      unawaited(syncOAuthAppsWithBackend());
     }
     unawaited(_startRealtimeSync());
     syncStatus = signUp
@@ -1051,11 +1132,25 @@ class AdoetzAppState extends ChangeNotifier {
       
       syncStatus = 'Account connected. Pushing local data...';
       notifyListeners();
-      
-      await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
+
+      if (!isSignUp && result.remoteState != null && _hasRemoteData(result.remoteState!)) {
+        final merged = _mergeRemote(buildState(), result.remoteState!);
+        _applyState(
+          PersistedAppState.fromJson({
+            ...merged.toJson(includeSecrets: true),
+            'currentUser': result.user.toJson(),
+            'authToken': result.token,
+            'syncSettings': syncSettings.copyWith(enabled: true).toJson(),
+          }),
+          notify: false,
+        );
+      } else {
+        await _sync.pushRemoteState(buildState(), syncSettings, lastSyncAt: lastSyncAt);
+      }
       _clearDirtySyncState();
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       unawaited(_startRealtimeSync());
+      unawaited(syncOAuthAppsWithBackend());
       syncStatus = 'Successfully migrated to Supabase.';
     } catch (error) {
       syncStatus = error.toString().replaceFirst('Exception: ', '');
@@ -1069,7 +1164,10 @@ class AdoetzAppState extends ChangeNotifier {
         state.memories.isNotEmpty ||
         state.geminiApiKey.isNotEmpty ||
         state.endpoints.isNotEmpty ||
-        state.tokenUsageData.isNotEmpty;
+        state.tokenUsageData.isNotEmpty ||
+        state.oauthAppConfigs.isNotEmpty ||
+        state.mcpServers.isNotEmpty ||
+        state.cronJobs.isNotEmpty;
   }
 
   Future<void> signOut() async {
@@ -1327,13 +1425,50 @@ class AdoetzAppState extends ChangeNotifier {
   }
 
   Future<void> syncOAuthAppsWithBackend() async {
-    if (oauthAppConfigs.isNotEmpty) {
-      await PluginService.instance.syncOAuthApps(
+    try {
+      if (oauthAppConfigs.isNotEmpty) {
+        await PluginService.instance.syncOAuthApps(
+          backendUrl,
+          oauthAppConfigs,
+          authToken: authToken,
+          userId: currentUser?.id,
+        );
+      }
+
+      final remoteConfigs = await PluginService.instance.fetchOAuthApps(
         backendUrl,
-        oauthAppConfigs,
         authToken: authToken,
         userId: currentUser?.id,
+        includeSecrets: true,
       );
+
+      if (remoteConfigs.isNotEmpty) {
+        final merged = _mergeOAuthAppConfigs(
+          oauthAppConfigs,
+          remoteConfigs,
+          preferRemote: true,
+        );
+        final hasChanged = merged.length != oauthAppConfigs.length ||
+            merged.any((m) {
+              final existing = oauthAppConfigs.cast<OAuthAppConfig?>().firstWhere(
+                (o) => o != null && _oauthAppConfigMergeKey(o) == _oauthAppConfigMergeKey(m),
+                orElse: () => null,
+              );
+              if (existing == null) return true;
+              return existing.clientSecret != m.clientSecret ||
+                  existing.clientId != m.clientId ||
+                  existing.enabled != m.enabled ||
+                  existing.name != m.name;
+            });
+
+        if (hasChanged) {
+          oauthAppConfigs = merged;
+          notifyListeners();
+          unawaited(_persistAndScheduleRemote());
+        }
+      }
+    } catch (e) {
+      debugPrint('Error syncing OAuth apps with backend: $e');
     }
   }
 
@@ -2548,6 +2683,38 @@ class AdoetzAppState extends ChangeNotifier {
       }
     }
 
+    final List<Map<String, dynamic>> liveTools = [];
+    if (isOpenClawProxy) {
+      liveTools.add({
+        'name': 'query_openclaw_agent',
+        'description': 'Use this tool to ask the OpenClaw agent for an answer to the user\'s query.',
+        'parameters': {
+          'type': 'OBJECT',
+          'properties': {
+            'prompt': {'type': 'STRING'}
+          },
+          'required': ['prompt']
+        }
+      });
+    }
+
+    final enabledPluginSchemas = PluginService.instance.getEnabledToolSchemas(
+      enabledStates: pluginEnabledStates,
+      oauthStatus: pluginOAuthStatus,
+    );
+    for (final s in enabledPluginSchemas) {
+      final fn = s['function'];
+      if (fn is Map) {
+        liveTools.add(Map<String, dynamic>.from(fn));
+      }
+    }
+
+    final liveSystemInstruction = customSysInstruction ?? (isOpenClawProxy
+        ? 'You are a voice interface for the OpenClaw agent. Whenever the user asks a question, you MUST use the `query_openclaw_agent` tool to get the answer, and then read the answer back to the user exactly as provided.'
+        : (enabledPluginSchemas.isNotEmpty
+            ? 'You are a voice assistant with real-time access to user services (Gmail, Google Calendar, Google Drive, Google Docs, Google Sheets, GitHub). When the user asks you about emails, events, files, documents, or repositories, call the corresponding tool and summarize the results clearly and concisely in natural spoken voice.'
+            : null));
+
     for (final liveModel in liveModels) {
       late GeminiLiveService service;
       service = GeminiLiveService(
@@ -2562,23 +2729,9 @@ class AdoetzAppState extends ChangeNotifier {
         translationConfig: translationConfig,
         audioTranscriptionConfig: audioTranscriptionConfig,
         contextWindowCompression: contextWindowCompression,
-        systemInstructionOverride: customSysInstruction ?? (isOpenClawProxy
-           ? 'You are a voice interface for the OpenClaw agent. Whenever the user asks a question, you MUST use the `query_openclaw_agent` tool to get the answer, and then read the answer back to the user exactly as provided.'
-           : null),
-        tools: isOpenClawProxy ? [
-           {
-              'name': 'query_openclaw_agent',
-              'description': 'Use this tool to ask the OpenClaw agent for an answer to the user\'s query.',
-              'parameters': {
-                'type': 'OBJECT',
-                'properties': {
-                  'prompt': {'type': 'STRING'}
-                },
-                'required': ['prompt']
-              }
-           }
-        ] : null,
-        onToolCall: isOpenClawProxy ? (name, args) async {
+        systemInstructionOverride: liveSystemInstruction,
+        tools: liveTools.isNotEmpty ? liveTools : null,
+        onToolCall: liveTools.isNotEmpty ? (name, args) async {
             if (name == 'query_openclaw_agent') {
                final prompt = args['prompt'] as String?;
                if (prompt == null || prompt.isEmpty) return {'error': 'prompt is required'};
@@ -2607,10 +2760,26 @@ class AdoetzAppState extends ChangeNotifier {
                     service.injectClientMessage('SYSTEM NOTIFICATION: The OpenClaw task failed with error: $e');
                  }
                });
-               
+
                return {'status': 'Background task started successfully. Please tell the user you are working on it and ask if they need anything else while waiting.'};
             }
-            return {'error': 'Unknown tool'};
+
+            if (PluginService.instance.isPluginTool(name)) {
+              try {
+                final result = await PluginService.instance.executeTool(
+                  backendUrl: backendUrl,
+                  tool: name,
+                  parameters: args,
+                  authToken: authToken,
+                  userId: currentUser?.id,
+                );
+                return result;
+              } catch (e) {
+                return {'error': 'Tool execution failed: $e'};
+              }
+            }
+
+            return {'error': 'Unknown tool $name'};
         } : null,
         onStatus: (status) {
           if (_liveService != service) return;
@@ -4411,6 +4580,7 @@ class AdoetzAppState extends ChangeNotifier {
       syncStatus = 'Database sync updated.';
       notifyListeners();
       await _persist(touchSavedAt: false);
+      unawaited(syncOAuthAppsWithBackend());
     } finally {
       _applyingRemoteSync = false;
     }

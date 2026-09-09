@@ -609,47 +609,71 @@ interface StoredOAuthToken {
   updatedAt: number;
 }
 
+async function getEffectiveDatabaseUrl(): Promise<string | undefined> {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  try {
+    const state = await readState();
+    const url = state?.syncSettings?.database?.databaseUrl || state?.databaseUrl || state?._databaseUrl;
+    if (url && typeof url === 'string' && url.trim().length > 0) {
+      return url.trim();
+    }
+  } catch (_) {}
+  return undefined;
+}
+
+async function getOAuthPostgresClient(): Promise<{ client: pg.Client; schema: string } | null> {
+  const dbUrl = await getEffectiveDatabaseUrl();
+  if (!dbUrl) return null;
+  try {
+    const client = new Client({
+      connectionString: dbUrl,
+      ssl: dbUrl.includes('sslmode=require') || !dbUrl.includes('localhost') ? { rejectUnauthorized: false } : undefined,
+    });
+    await client.connect();
+    const schemaName = process.env.POSTGRES_SCHEMA || 'adoetzgpt';
+    await ensurePostgres(client, schemaName).catch(() => undefined);
+    return { client, schema: quoteIdent(schemaName) };
+  } catch (err) {
+    console.warn('Postgres connection failed, falling back to local state:', err);
+    return null;
+  }
+}
+
 async function getStoredToken(userId: string, provider: string): Promise<StoredOAuthToken | null> {
-  if (process.env.DATABASE_URL) {
+  const pgCtx = await getOAuthPostgresClient();
+  if (pgCtx) {
+    const { client, schema } = pgCtx;
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        let res = await client.query(
-          `SELECT * FROM ${schema}.user_oauth_tokens WHERE user_id = $1 AND provider = $2`,
-          [userId, provider]
+      let res = await client.query(
+        `SELECT * FROM ${schema}.user_oauth_tokens WHERE user_id = $1 AND provider = $2`,
+        [userId, provider]
+      );
+      if (res.rows.length === 0) {
+        res = await client.query(
+          `SELECT * FROM ${schema}.user_oauth_tokens WHERE provider = $1 ORDER BY updated_at DESC LIMIT 1`,
+          [provider]
         );
-        if (res.rows.length === 0) {
-          res = await client.query(
-            `SELECT * FROM ${schema}.user_oauth_tokens WHERE provider = $1 ORDER BY updated_at DESC LIMIT 1`,
-            [provider]
-          );
-        }
-        if (res.rows.length > 0) {
-          const r = res.rows[0];
-          return {
-            userId: r.user_id,
-            provider: r.provider,
-            accessToken: r.access_token,
-            refreshToken: r.refresh_token,
-            tokenExpiry: r.token_expiry ? new Date(r.token_expiry).getTime() : undefined,
-            scopes: r.scopes,
-            accountEmail: r.account_email,
-            accountName: r.account_name,
-            accountAvatar: r.account_avatar,
-            rawProfile: r.raw_profile,
-            updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
-          };
-        }
-      } finally {
-        await client.end();
+      }
+      if (res.rows.length > 0) {
+        const r = res.rows[0];
+        return {
+          userId: r.user_id,
+          provider: r.provider,
+          accessToken: r.access_token,
+          refreshToken: r.refresh_token,
+          tokenExpiry: r.token_expiry ? new Date(r.token_expiry).getTime() : undefined,
+          scopes: r.scopes,
+          accountEmail: r.account_email,
+          accountName: r.account_name,
+          accountAvatar: r.account_avatar,
+          rawProfile: r.raw_profile,
+          updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+        };
       }
     } catch (e) {
       console.warn('Postgres getStoredToken failed, checking local file state:', e);
+    } finally {
+      await client.end().catch(() => undefined);
     }
   }
 
@@ -669,47 +693,41 @@ async function getStoredToken(userId: string, provider: string): Promise<StoredO
 }
 
 async function saveStoredToken(tokenData: StoredOAuthToken): Promise<void> {
-  if (process.env.DATABASE_URL) {
+  const pgCtx = await getOAuthPostgresClient();
+  if (pgCtx) {
+    const { client, schema } = pgCtx;
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        await client.query(
-          `INSERT INTO ${schema}.user_oauth_tokens
-           (user_id, provider, access_token, refresh_token, token_expiry, scopes, account_email, account_name, account_avatar, raw_profile, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
-           ON CONFLICT (user_id, provider) DO UPDATE SET
-             access_token = EXCLUDED.access_token,
-             refresh_token = COALESCE(EXCLUDED.refresh_token, ${schema}.user_oauth_tokens.refresh_token),
-             token_expiry = EXCLUDED.token_expiry,
-             scopes = EXCLUDED.scopes,
-             account_email = EXCLUDED.account_email,
-             account_name = EXCLUDED.account_name,
-             account_avatar = EXCLUDED.account_avatar,
-             raw_profile = EXCLUDED.raw_profile,
-             updated_at = NOW()`,
-          [
-            tokenData.userId,
-            tokenData.provider,
-            tokenData.accessToken,
-            tokenData.refreshToken || null,
-            tokenData.tokenExpiry ? new Date(tokenData.tokenExpiry) : null,
-            tokenData.scopes || null,
-            tokenData.accountEmail || null,
-            tokenData.accountName || null,
-            tokenData.accountAvatar || null,
-            JSON.stringify(tokenData.rawProfile || {}),
-          ]
-        );
-      } finally {
-        await client.end();
-      }
+      await client.query(
+        `INSERT INTO ${schema}.user_oauth_tokens
+         (user_id, provider, access_token, refresh_token, token_expiry, scopes, account_email, account_name, account_avatar, raw_profile, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+         ON CONFLICT (user_id, provider) DO UPDATE SET
+           access_token = EXCLUDED.access_token,
+           refresh_token = COALESCE(EXCLUDED.refresh_token, ${schema}.user_oauth_tokens.refresh_token),
+           token_expiry = EXCLUDED.token_expiry,
+           scopes = EXCLUDED.scopes,
+           account_email = EXCLUDED.account_email,
+           account_name = EXCLUDED.account_name,
+           account_avatar = EXCLUDED.account_avatar,
+           raw_profile = EXCLUDED.raw_profile,
+           updated_at = NOW()`,
+        [
+          tokenData.userId,
+          tokenData.provider,
+          tokenData.accessToken,
+          tokenData.refreshToken || null,
+          tokenData.tokenExpiry ? new Date(tokenData.tokenExpiry) : null,
+          tokenData.scopes || null,
+          tokenData.accountEmail || null,
+          tokenData.accountName || null,
+          tokenData.accountAvatar || null,
+          JSON.stringify(tokenData.rawProfile || {}),
+        ]
+      );
     } catch (e) {
       console.warn('Postgres saveStoredToken failed, saving to local file state:', e);
+    } finally {
+      await client.end().catch(() => undefined);
     }
   }
 
@@ -721,24 +739,18 @@ async function saveStoredToken(tokenData: StoredOAuthToken): Promise<void> {
 }
 
 async function deleteStoredToken(userId: string, provider: string): Promise<void> {
-  if (process.env.DATABASE_URL) {
+  const pgCtx = await getOAuthPostgresClient();
+  if (pgCtx) {
+    const { client, schema } = pgCtx;
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        await client.query(
-          `DELETE FROM ${schema}.user_oauth_tokens WHERE user_id = $1 AND provider = $2`,
-          [userId, provider]
-        );
-      } finally {
-        await client.end();
-      }
+      await client.query(
+        `DELETE FROM ${schema}.user_oauth_tokens WHERE user_id = $1 AND provider = $2`,
+        [userId, provider]
+      );
     } catch (e) {
       console.warn('Postgres deleteStoredToken failed:', e);
+    } finally {
+      await client.end().catch(() => undefined);
     }
   }
 
@@ -793,19 +805,22 @@ function maskSecret(secret: string): string {
 }
 
 async function getOAuthConfigs(userId: string): Promise<StoredOAuthConfig[]> {
-  if (process.env.DATABASE_URL) {
+  const pg = await getOAuthPostgresClient();
+  if (pg) {
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        const res = await client.query(
-          `SELECT * FROM ${schema}.user_oauth_configs WHERE user_id = $1 ORDER BY created_at ASC`,
-          [userId]
+      let res = await pg.client.query(
+        `SELECT * FROM ${pg.schema}.user_oauth_configs WHERE user_id = $1 ORDER BY created_at ASC`,
+        [userId]
+      );
+      if (res.rows.length === 0 && userId !== 'default') {
+        const fallbackRes = await pg.client.query(
+          `SELECT * FROM ${pg.schema}.user_oauth_configs WHERE user_id = 'default' ORDER BY created_at ASC`
         );
+        if (fallbackRes.rows.length > 0) {
+          res = fallbackRes;
+        }
+      }
+      if (res.rows.length > 0) {
         return res.rows.map((r: any) => ({
           id: r.id,
           userId: r.user_id,
@@ -817,16 +832,16 @@ async function getOAuthConfigs(userId: string): Promise<StoredOAuthConfig[]> {
           createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
           updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
         }));
-      } finally {
-        await client.end();
       }
     } catch (e) {
       console.warn('Postgres getOAuthConfigs failed, falling back to local state:', e);
+    } finally {
+      await pg.client.end();
     }
   }
 
   const state = (await readState()) || {};
-  const list: StoredOAuthConfig[] = state._oauthConfigs?.[userId] || [];
+  const list: StoredOAuthConfig[] = state._oauthConfigs?.[userId] || (userId !== 'default' ? state._oauthConfigs?.['default'] : []) || [];
   return list;
 }
 
@@ -836,7 +851,10 @@ async function saveOAuthConfig(
 ): Promise<StoredOAuthConfig> {
   const existingConfigs = await getOAuthConfigs(userId);
   const id = data.id || randomUUID();
-  const existing = existingConfigs.find((c) => c.id === id);
+  let existing = existingConfigs.find((c) => c.id === id);
+  if (!existing && data.provider) {
+    existing = existingConfigs.find((c) => c.provider.toLowerCase() === data.provider.toLowerCase());
+  }
 
   let encryptedSecret = existing?.clientSecret || '';
   if (data.clientSecret && !data.clientSecret.includes('••••')) {
@@ -857,47 +875,40 @@ async function saveOAuthConfig(
     updatedAt: Date.now(),
   };
 
-  if (process.env.DATABASE_URL) {
+  const pg = await getOAuthPostgresClient();
+  if (pg) {
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        if (config.enabled) {
-          await client.query(
-            `UPDATE ${schema}.user_oauth_configs SET enabled = false WHERE user_id = $1 AND provider = $2`,
-            [userId, config.provider]
-          );
-        }
-        await client.query(
-          `INSERT INTO ${schema}.user_oauth_configs (id, user_id, name, provider, client_id, client_secret, enabled, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-           ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name,
-             provider = EXCLUDED.provider,
-             client_id = EXCLUDED.client_id,
-             client_secret = CASE WHEN EXCLUDED.client_secret = '' THEN ${schema}.user_oauth_configs.client_secret ELSE EXCLUDED.client_secret END,
-             enabled = EXCLUDED.enabled,
-             updated_at = NOW()`,
-          [
-            config.id,
-            config.userId,
-            config.name,
-            config.provider,
-            config.clientId,
-            config.clientSecret,
-            config.enabled,
-            new Date(config.createdAt),
-          ]
+      if (config.enabled) {
+        await pg.client.query(
+          `UPDATE ${pg.schema}.user_oauth_configs SET enabled = false WHERE (user_id = $1 OR user_id = 'default') AND provider = $2`,
+          [userId, config.provider]
         );
-      } finally {
-        await client.end();
       }
+      await pg.client.query(
+        `INSERT INTO ${pg.schema}.user_oauth_configs (id, user_id, name, provider, client_id, client_secret, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           provider = EXCLUDED.provider,
+           client_id = EXCLUDED.client_id,
+           client_secret = CASE WHEN EXCLUDED.client_secret = '' THEN ${pg.schema}.user_oauth_configs.client_secret ELSE EXCLUDED.client_secret END,
+           enabled = EXCLUDED.enabled,
+           updated_at = NOW()`,
+        [
+          config.id,
+          config.userId,
+          config.name,
+          config.provider,
+          config.clientId,
+          config.clientSecret,
+          config.enabled,
+          new Date(config.createdAt),
+        ]
+      );
     } catch (e) {
       console.warn('Postgres saveOAuthConfig failed:', e);
+    } finally {
+      await pg.client.end();
     }
   }
 
@@ -922,24 +933,17 @@ async function saveOAuthConfig(
 }
 
 async function deleteOAuthConfig(userId: string, id: string): Promise<void> {
-  if (process.env.DATABASE_URL) {
+  const pg = await getOAuthPostgresClient();
+  if (pg) {
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        await client.query(
-          `DELETE FROM ${schema}.user_oauth_configs WHERE user_id = $1 AND id = $2`,
-          [userId, id]
-        );
-      } finally {
-        await client.end();
-      }
+      await pg.client.query(
+        `DELETE FROM ${pg.schema}.user_oauth_configs WHERE (user_id = $1 OR user_id = 'default') AND id = $2`,
+        [userId, id]
+      );
     } catch (e) {
       console.warn('Postgres deleteOAuthConfig failed:', e);
+    } finally {
+      await pg.client.end();
     }
   }
 
@@ -957,36 +961,30 @@ async function toggleOAuthConfig(userId: string, id: string): Promise<StoredOAut
 
   const newEnabled = !target.enabled;
 
-  if (process.env.DATABASE_URL) {
+  const pg = await getOAuthPostgresClient();
+  if (pg) {
     try {
-      const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
-      });
-      await client.connect();
-      try {
-        const schema = quoteIdent(process.env.POSTGRES_SCHEMA || 'adoetzgpt');
-        if (newEnabled) {
-          await client.query(
-            `UPDATE ${schema}.user_oauth_configs SET enabled = false WHERE user_id = $1 AND provider = $2`,
-            [userId, target.provider]
-          );
-        }
-        await client.query(
-          `UPDATE ${schema}.user_oauth_configs SET enabled = $1, updated_at = NOW() WHERE user_id = $2 AND id = $3`,
-          [newEnabled, userId, id]
+      if (newEnabled) {
+        await pg.client.query(
+          `UPDATE ${pg.schema}.user_oauth_configs SET enabled = false WHERE (user_id = $1 OR user_id = 'default') AND provider = $2`,
+          [target.userId || userId, target.provider]
         );
-      } finally {
-        await client.end();
       }
+      await pg.client.query(
+        `UPDATE ${pg.schema}.user_oauth_configs SET enabled = $1, updated_at = NOW() WHERE (user_id = $2 OR user_id = 'default') AND id = $3`,
+        [newEnabled, target.userId || userId, id]
+      );
     } catch (e) {
       console.warn('Postgres toggleOAuthConfig failed:', e);
+    } finally {
+      await pg.client.end();
     }
   }
 
   const state = (await readState()) || {};
-  if (state._oauthConfigs?.[userId]) {
-    state._oauthConfigs[userId] = state._oauthConfigs[userId].map((c: StoredOAuthConfig) => {
+  const targetUid = state._oauthConfigs?.[userId] ? userId : 'default';
+  if (state._oauthConfigs?.[targetUid]) {
+    state._oauthConfigs[targetUid] = state._oauthConfigs[targetUid].map((c: StoredOAuthConfig) => {
       if (newEnabled && c.provider === target.provider) {
         return { ...c, enabled: c.id === id };
       }
@@ -1004,6 +1002,36 @@ async function toggleOAuthConfig(userId: string, id: string): Promise<StoredOAut
 async function getActiveOAuthConfig(userId: string, provider: string): Promise<{ clientId: string; clientSecret: string; source: 'app' | 'env' } | null> {
   const configs = await getOAuthConfigs(userId);
   let active = configs.find((c) => c.provider.toLowerCase() === provider.toLowerCase() && c.enabled);
+
+  if (!active) {
+    const pg = await getOAuthPostgresClient();
+    if (pg) {
+      try {
+        const res = await pg.client.query(
+          `SELECT * FROM ${pg.schema}.user_oauth_configs WHERE provider = $1 AND enabled = true ORDER BY updated_at DESC LIMIT 1`,
+          [provider.toLowerCase()]
+        );
+        if (res.rows.length > 0) {
+          const r = res.rows[0];
+          active = {
+            id: r.id,
+            userId: r.user_id,
+            name: r.name,
+            provider: r.provider,
+            clientId: r.client_id,
+            clientSecret: r.client_secret,
+            enabled: Boolean(r.enabled),
+            createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+            updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+          };
+        }
+      } catch (e) {
+        console.warn('Postgres fallback getActiveOAuthConfig failed:', e);
+      } finally {
+        await pg.client.end();
+      }
+    }
+  }
 
   if (!active) {
     const state = (await readState()) || {};
@@ -1397,6 +1425,7 @@ app.post('/api/auth/oauth/:provider/disconnect', async (req, res) => {
 app.get('/api/auth/oauth/apps', async (req, res) => {
   try {
     const userId = getUserIdFromReq(req);
+    const includeSecrets = String(req.query.includeSecrets || req.query.full || '').toLowerCase() === 'true';
     const configs = await getOAuthConfigs(userId);
     res.json({
       configs: configs.map((c) => ({
@@ -1405,7 +1434,7 @@ app.get('/api/auth/oauth/apps', async (req, res) => {
         name: c.name,
         provider: c.provider,
         clientId: c.clientId,
-        clientSecret: maskSecret(c.clientSecret),
+        clientSecret: includeSecrets ? (decryptToken(c.clientSecret) || '') : maskSecret(c.clientSecret),
         hasSecret: Boolean(c.clientSecret),
         enabled: c.enabled,
         createdAt: c.createdAt,

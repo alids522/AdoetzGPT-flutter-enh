@@ -941,11 +941,13 @@ class PluginService {
     String backendUrl, {
     String? authToken,
     String? userId,
+    bool includeSecrets = true,
   }) async {
     final base = backendUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/api/auth/oauth/apps').replace(
       queryParameters: {
         if (userId != null && userId.isNotEmpty) 'userId': userId,
+        if (includeSecrets) 'includeSecrets': 'true',
       },
     );
 
